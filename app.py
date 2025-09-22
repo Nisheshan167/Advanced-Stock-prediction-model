@@ -104,7 +104,7 @@ df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adj
 df = df[["Close", "Volume"]].dropna()
 
 st.subheader(f"Data Preview ({ticker})")
-st.dataframe(df.head())
+st.dataframe(df.tail(5))
 
 # Scale
 scaler = MinMaxScaler(feature_range=(0,1))
@@ -160,22 +160,28 @@ if st.button("Train Model 🚀"):
     st.pyplot(fig)
 
     # Forecast future
-    st.subheader(f"🔮 Forecast for next {forecast_days} days")
-    future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=forecast_days)
-    future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
+st.subheader(f"🔮 Forecast for next {forecast_days} days")
+future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=forecast_days)
 
-    # Table
-    st.dataframe(future_df)
+future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
+last_date = df.index.max()
+future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days, freq="B")
+future_df.index = future_dates
 
-    # Separate charts
-    fig2, ax1 = plt.subplots(figsize=(10,4))
-    ax1.plot(future_df["Close"], marker="o", color="red")
-    ax1.set_title("Forecasted Close Price")
-    ax1.set_ylabel("Close Price")
-    st.pyplot(fig2)
+# Table with real dates
+st.dataframe(future_df)
 
-    fig3, ax2 = plt.subplots(figsize=(10,4))
-    ax2.plot(future_df["Volume"], marker="o", color="blue")
-    ax2.set_title("Forecasted Volume")
-    ax2.set_ylabel("Volume")
-    st.pyplot(fig3)
+# Separate charts
+fig2, ax1 = plt.subplots(figsize=(10,4))
+ax1.plot(future_df.index, future_df["Close"], marker="o", color="red")
+ax1.set_title("Forecasted Close Price")
+ax1.set_ylabel("Close Price")
+st.pyplot(fig2)
+
+fig3, ax2 = plt.subplots(figsize=(10,4))
+ax2.plot(future_df.index, future_df["Volume"], marker="o", color="blue")
+ax2.set_title("Forecasted Volume")
+ax2.set_ylabel("Volume")
+st.pyplot(fig3)
+
+
