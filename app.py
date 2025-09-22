@@ -5,25 +5,38 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
-from tensorflow.keras.models import load_model
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime
 import shap
 
 # -----------------------
-# Load trained model
+# Rebuild Final Model Architecture
 # -----------------------
-@st.cache_resource
-def load_lstm_model():
-    return load_model("enhanced_lstm_stock.h5")
+def build_final_model(lookback=90, n_features=6, horizon=5):
+    model = Sequential([
+        LSTM(64, input_shape=(lookback, n_features)),
+        Dropout(0.1),
+        Dense(64, activation="relu"),
+        Dense(horizon * 2)  # Close + Volume for 5 days
+    ])
+    model.compile(optimizer="adam", loss="mse")
+    return model
 
-model = load_lstm_model()
+@st.cache_resource
+def load_trained_model(weights_path="lstm.weights.h5"):
+    model = build_final_model()
+    model.load_weights(weights_path)
+    return model
+
+model = load_trained_model()
 
 # -----------------------
 # Functions
 # -----------------------
 def add_indicators(df):
-    """Add moving averages and exponential moving averages."""
+    """Add SMA and EMA indicators."""
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
     df["SMA_30"] = df["Close"].rolling(window=30).mean()
     df["EMA_10"] = df["Close"].ewm(span=10, adjust=False).mean()
@@ -35,13 +48,12 @@ def preprocess(df, lookback=90):
     features = ["Close", "Volume", "SMA_10", "SMA_30", "EMA_10", "EMA_30"]
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(df[features])
-    last_seq = np.array([scaled[-lookback:]])  # shape (1, lookback, n_features)
+    last_seq = np.array([scaled[-lookback:]])  # (1, lookback, n_features)
     return last_seq, scaler, features
 
 def forecast(model, seq, scaler, horizon=5):
-    """Make prediction for next horizon days and inverse scale."""
-    y_pred = model.predict(seq).reshape(horizon, 2)  # Close + Volume only
-    # Pad back into feature space (other cols = 0) for inverse scaling
+    """Make forecast and inverse transform."""
+    y_pred = model.predict(seq).reshape(horizon, 2)  # Close + Volume
     pad = np.zeros((y_pred.shape[0], scaler.n_features_in_))
     pad[:, 0] = y_pred[:, 0]  # Close
     pad[:, 1] = y_pred[:, 1]  # Volume
@@ -76,9 +88,7 @@ if st.sidebar.button("Run Prediction"):
     # -----------------------
     seq, scaler, features = preprocess(df, lookback=lookback)
     pred_df = forecast(model, seq, scaler, horizon=horizon)
-
-    # Assign dates to predictions (business days only)
-    pred_df.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1), 
+    pred_df.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1),
                                   periods=horizon, freq="B")
 
     # -----------------------
@@ -87,7 +97,7 @@ if st.sidebar.button("Run Prediction"):
     st.subheader("Predicted Next 5 Days")
     st.write(pred_df)
 
-    # Plot historical with SMA/EMA
+    # Plot with indicators
     fig, ax = plt.subplots(figsize=(12,6))
     ax.plot(df.index, df["Close"], label="Historical Close", color="green")
     ax.plot(df.index, df["SMA_10"], label="SMA 10", linestyle="--", color="orange")
@@ -107,19 +117,19 @@ if st.sidebar.button("Run Prediction"):
     try:
         explainer = shap.Explainer(model, seq)
         shap_values = explainer(seq)
-        shap_fig = shap.plots.bar(shap_values[0], show=False)
+        shap.plots.bar(shap_values[0], show=False)
         st.pyplot(bbox_inches="tight")
     except Exception as e:
         st.warning("SHAP explanation not available in this environment.")
         st.text(str(e))
 
     # -----------------------
-    # (Optional) ChatGPT Explanation
+    # Static Explanation
     # -----------------------
-    st.subheader("AI-generated Explanation")
+    st.subheader("AI-generated Narrative")
     st.info(
         "The model predicts the next 5 days of Close and Volume. "
-        "Short-term EMAs vs long-term SMAs help highlight momentum trends. "
-        "If EMA_10 > EMA_30, the model tends to predict upward momentum; "
-        "if Volume is high while price is rising, it strengthens the bullish signal."
+        "When short-term EMAs rise above long-term EMAs (e.g., EMA_10 > EMA_30), "
+        "it indicates bullish momentum. If Volume also increases alongside rising prices, "
+        "the upward trend is considered stronger."
     )
