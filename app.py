@@ -233,6 +233,34 @@ if st.button("Train Model 🚀"):
     st.pyplot(fig4)
 
 
+import shap
+
+# Explainability with SHAP
+st.subheader("🧠 Explainable AI — SHAP Explanation")
+
+# Use last input window for explanation
+last_window = scaled[-lookback:]
+X_input = np.expand_dims(last_window, axis=0)
+
+# SHAP KernelExplainer (model.predict works with numpy)
+explainer = shap.KernelExplainer(model.predict, X_train[:100])  # use a small background
+shap_values = explainer.shap_values(X_input, nsamples=100)
+
+# Convert to dataframe for readability
+shap_df = pd.DataFrame(
+    shap_values[0].reshape(lookback, -1), 
+    columns=["Close", "Volume"], 
+    index=df.index[-lookback:]
+)
+
+st.write("📊 SHAP values for last 30 days (feature impact):")
+st.dataframe(shap_df.tail(10))
+
+# Plot summary
+fig_shap, ax = plt.subplots(figsize=(10,5))
+shap.summary_plot(shap_values, X_input, feature_names=["Close", "Volume"], show=False)
+st.pyplot(fig_shap)
+
 
 
 
