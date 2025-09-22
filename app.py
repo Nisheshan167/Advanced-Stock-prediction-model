@@ -89,7 +89,7 @@ st.write("Lookback = 30 days, Horizon = 5 days (fixed)")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
-forecast_days = st.sidebar.slider("Forecast Days Ahead", 1, 30, 5)
+forecast_days = 5 
 
 # Fixed params
 lookback = 30
@@ -183,6 +183,7 @@ if st.button("Train Model 🚀"):
     ax2.set_title("Forecasted Volume")
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
+
 
 
 
