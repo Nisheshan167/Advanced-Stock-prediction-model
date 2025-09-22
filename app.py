@@ -12,30 +12,6 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
 # =====================================
 # Utility functions
-import tensorflow as tf
-
-def explain_prediction(model, input_window):
-    """
-    Compute saliency scores for the last lookback window.
-    input_window: shape (lookback, n_features)
-    """
-    input_tensor = tf.convert_to_tensor(
-        input_window.reshape(1, input_window.shape[0], input_window.shape[1]),
-        dtype=tf.float32
-    )
-    
-    with tf.GradientTape() as tape:
-        tape.watch(input_tensor)
-        prediction = model(input_tensor)
-        # Focus only on the Close price of the first forecast day
-        target = prediction[0, 0]  
-    
-    grads = tape.gradient(target, input_tensor).numpy()[0]
-    grads_abs = np.abs(grads)
-    grads_norm = grads_abs / (np.max(grads_abs) + 1e-8)  # normalize
-    
-    return grads_norm
-
 # =====================================
 def set_seed(seed=42):
     random.seed(seed); np.random.seed(seed); tf.random.set_seed(seed)
@@ -77,8 +53,8 @@ def train_and_eval(model, X_train, y_train, X_test, y_test, batch_size=32, max_e
     y_pred = model.predict(X_test, verbose=0).reshape(-1, y_test.shape[1], y_test.shape[2])
 
     # Inverse scale
-    y_pred_flat = y_pred.reshape(-1, 2)
-    y_test_flat = y_test.reshape(-1, 2)
+    y_pred_flat = y_pred.reshape(-1, X_test.shape[2])
+    y_test_flat = y_test.reshape(-1, X_test.shape[2])
     y_pred_real = scaler.inverse_transform(y_pred_flat).reshape(y_pred.shape)
     y_test_real = scaler.inverse_transform(y_test_flat).reshape(y_test.shape)
 
@@ -102,6 +78,50 @@ def forecast_future(model, data, lookback, horizon, scaler, steps=5):
     preds_real = scaler.inverse_transform(preds)
     return preds_real
 
+# =====================================
+# Narrative ExplainAI
+# =====================================
+def explain_forecast(future_df, df):
+    """
+    Generate a natural language explanation of the forecast
+    using indicators from the last available date.
+    """
+    last_row = df.iloc[-1]
+    explanation = []
+
+    # Close trend
+    if future_df["Close"].iloc[-1] > last_row["Close"]:
+        explanation.append("The model forecasts an upward trend in Close price over the next 5 days.")
+    else:
+        explanation.append("The model forecasts a downward trend in Close price over the next 5 days.")
+
+    # Volume
+    if future_df["Volume"].mean() > df["Volume"].tail(20).mean():
+        explanation.append("Predicted trading volume is above the recent 20-day average, suggesting stronger activity.")
+    else:
+        explanation.append("Predicted trading volume is below the recent 20-day average, suggesting weaker activity.")
+
+    # SMA crossover
+    if last_row["SMA_10"] > last_row["SMA_20"]:
+        explanation.append("The 10-day SMA is above the 20-day SMA, indicating bullish momentum.")
+    else:
+        explanation.append("The 10-day SMA is below the 20-day SMA, indicating bearish momentum.")
+
+    # EMA crossover
+    if last_row["EMA_10"] > last_row["EMA_20"]:
+        explanation.append("The 10-day EMA is trending above the 20-day EMA, reinforcing bullish sentiment.")
+    else:
+        explanation.append("The 10-day EMA is trending below the 20-day EMA, reinforcing bearish sentiment.")
+
+    # RSI
+    if last_row["RSI_14"] > 70:
+        explanation.append("RSI indicates the stock may be overbought.")
+    elif last_row["RSI_14"] < 30:
+        explanation.append("RSI indicates the stock may be oversold.")
+    else:
+        explanation.append("RSI is in a neutral zone.")
+
+    return " ".join(explanation)
 
 # =====================================
 # Streamlit App
@@ -113,7 +133,6 @@ st.write("Lookback = 30 days, Horizon = 5 days (fixed)")
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
-forecast_days = 5 
 
 # Fixed params
 lookback = 30
@@ -126,6 +145,18 @@ epochs = 50
 # Download data
 df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
 df = df[["Close", "Volume"]].dropna()
+
+# === Add indicators ===
+df["SMA_10"] = df["Close"].rolling(10).mean()
+df["SMA_20"] = df["Close"].rolling(20).mean()
+df["EMA_10"] = df["Close"].ewm(span=10, adjust=False).mean()
+df["EMA_20"] = df["Close"].ewm(span=20, adjust=False).mean()
+delta = df["Close"].diff()
+gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+rs = gain / loss
+df["RSI_14"] = 100 - (100 / (1 + rs))
+df = df.dropna()
 
 st.subheader(f"Data Preview ({ticker})")
 st.dataframe(df.tail(5))
@@ -151,37 +182,7 @@ if st.button("Train Model 🚀"):
         batch_size=batch_size, max_epochs=epochs, scaler=scaler
     )
 
-  
-
-    # Predictions vs Actual
-    pred_close = y_pred_real.reshape(-1,2)[:,0]
-    true_close = y_test_real.reshape(-1,2)[:,0]
-    pred_volume = y_pred_real.reshape(-1,2)[:,1]
-    true_volume = y_test_real.reshape(-1,2)[:,1]
-
-    test_index = df.index[train_size+lookback: train_size+lookback+len(pred_close)]
-
-    # Fix mismatch
-    min_len = min(len(test_index), len(true_close), len(pred_close))
-    test_index = test_index[:min_len]
-    true_close, pred_close = true_close[:min_len], pred_close[:min_len]
-    true_volume, pred_volume = true_volume[:min_len], pred_volume[:min_len]
-
-    fig, axes = plt.subplots(2,1, figsize=(12,8), sharex=True)
-
-    axes[0].plot(df.index[:train_size+lookback], df['Close'][:train_size+lookback], label="Train Close", color="green")
-    axes[0].plot(test_index, true_close, label="Actual Close", color="blue")
-    axes[0].plot(test_index, pred_close, label="Predicted Close", color="red")
-    axes[0].set_title("Close Price Prediction")
-    axes[0].legend()
-
-    axes[1].plot(df.index[:train_size+lookback], df['Volume'][:train_size+lookback], label="Train Volume", color="green")
-    axes[1].plot(test_index, true_volume, label="Actual Volume", color="blue")
-    axes[1].plot(test_index, pred_volume, label="Predicted Volume", color="red")
-    axes[1].set_title("Volume Prediction")
-    axes[1].legend()
-
-    st.pyplot(fig)
+    st.success(f"✅ Model trained. RMSE Close: {metrics['RMSE_Close']:.2f}, RMSE Volume: {metrics['RMSE_Volume']:.2f}")
 
     # Forecast future
     st.subheader(f"🔮 Forecast for next 5 days")
@@ -195,7 +196,7 @@ if st.button("Train Model 🚀"):
     # Table with real dates
     st.dataframe(future_df)
 
-    # Separate charts
+    # Charts
     fig2, ax1 = plt.subplots(figsize=(10,4))
     ax1.plot(future_df.index, future_df["Close"], marker="o", color="red")
     ax1.set_title("Forecasted Close Price")
@@ -207,34 +208,8 @@ if st.button("Train Model 🚀"):
     ax2.set_title("Forecasted Volume")
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
-        # Explainability
-    st.subheader("🧠 Explainable AI — Feature Importance for Last 30 Days")
-    last_window = scaled[-lookback:]  # last 30 days of scaled input
-    importance = explain_prediction(model, last_window)
 
-    importance_df = pd.DataFrame(
-        importance, 
-        columns=["Close_importance", "Volume_importance"], 
-        index=df.index[-lookback:]
-    )
-
-    st.write("📊 Feature importance table (last 10 days shown):")
-    st.dataframe(importance_df.tail(10))
-
-    # Heatmap visualization
-    fig4, ax = plt.subplots(figsize=(12,5))
-    im = ax.imshow(importance.T, aspect="auto", cmap="Reds")
-    ax.set_yticks([0,1])
-    ax.set_yticklabels(["Close","Volume"])
-    ax.set_xticks(range(lookback))
-    ax.set_xticklabels(df.index[-lookback:].strftime("%Y-%m-%d"), rotation=90)
-    ax.set_title("Saliency Heatmap — Importance of Past Days")
-    fig4.colorbar(im, ax=ax)
-    st.pyplot(fig4)
-
-
-
-
-
-
-
+    # Narrative Explainability
+    st.subheader("🧠 Explainable AI — Narrative Explanation")
+    explanation_text = explain_forecast(future_df, df)
+    st.write(explanation_text)
