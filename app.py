@@ -127,7 +127,7 @@ if st.button("Train Model 🚀"):
         batch_size=batch_size, max_epochs=epochs, scaler=scaler
     )
 
-    st.success(f"✅ Model trained. RMSE Close: {metrics['RMSE_Close']:.2f}, RMSE Volume: {metrics['RMSE_Volume']:.2f}")
+  
 
     # Predictions vs Actual
     pred_close = y_pred_real.reshape(-1,2)[:,0]
@@ -183,6 +183,7 @@ if st.button("Train Model 🚀"):
     ax2.set_title("Forecasted Volume")
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
+
 
 
 
