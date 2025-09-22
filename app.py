@@ -28,7 +28,7 @@ def build_trained_model(lookback=60, n_features=2, horizon=5):
 # Load trained model weights
 # -------------------------------
 @st.cache_resource
-def load_model(weights_path="lstm.weights.h5"):
+def load_model(weights_path="lstmNishe.weights.h5"):
     model = build_trained_model(lookback=60, n_features=2, horizon=5)
     try:
         model.load_weights(weights_path)
@@ -37,7 +37,7 @@ def load_model(weights_path="lstm.weights.h5"):
         st.warning(f"⚠️ Could not load weights, using random init.\n\nError: {e}")
     return model
 
-model = load_model("lstm.weights.h5")   # change to lstmN.weights.h5 if needed
+model = load_model("lstmNishe.weights.h5")  
 
 # -------------------------------
 # Helper Functions
@@ -101,3 +101,4 @@ if st.sidebar.button("Run Forecast"):
     axes[1].legend()
 
     st.pyplot(fig)
+
