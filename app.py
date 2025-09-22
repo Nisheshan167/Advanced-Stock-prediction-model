@@ -10,6 +10,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime
 import shap
+import os
 
 # -----------------------
 # Rebuild Final Model Architecture
@@ -27,7 +28,15 @@ def build_final_model(lookback=90, n_features=6, horizon=5):
 @st.cache_resource
 def load_trained_model(weights_path="lstm.weights.h5"):
     model = build_final_model()
-    model.load_weights(weights_path)
+    if os.path.exists(weights_path):
+        try:
+            model.load_weights(weights_path)
+            st.success("✅ Trained weights loaded successfully!")
+        except Exception as e:
+            st.warning("⚠️ Could not load weights, using untrained model instead.")
+            st.text(str(e))
+    else:
+        st.warning(f"⚠️ Weights file '{weights_path}' not found. Using untrained model.")
     return model
 
 model = load_trained_model()
@@ -54,7 +63,6 @@ def preprocess(df, lookback=90):
 def forecast(model, seq, scaler, horizon=5):
     """Make forecast and inverse transform."""
     y_pred = model.predict(seq).reshape(horizon, 2)  # Close + Volume
-    # Pad predictions back into 6D space (other features = 0)
     pad = np.zeros((y_pred.shape[0], scaler.n_features_in_))
     pad[:, 0] = y_pred[:, 0]  # Close
     pad[:, 1] = y_pred[:, 1]  # Volume
@@ -121,7 +129,7 @@ if st.sidebar.button("Run Prediction"):
         shap.plots.bar(shap_values[0], show=False)
         st.pyplot(bbox_inches="tight")
     except Exception as e:
-        st.warning("SHAP explanation not available in this environment.")
+        st.warning("⚠️ SHAP explanation not available in this environment.")
         st.text(str(e))
 
     # -----------------------
@@ -134,4 +142,3 @@ if st.sidebar.button("Run Prediction"):
         "it indicates bullish momentum. If Volume also increases alongside rising prices, "
         "the upward trend is considered stronger."
     )
-
