@@ -1,5 +1,4 @@
 # app.py
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -11,101 +10,94 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from datetime import datetime
 
 # -------------------------------
-# Helper Functions
+# Model architecture (MUST MATCH COLAB)
 # -------------------------------
-def build_lstm_model(lookback=60, n_features=2, horizon=5, stack=(64, 64), dropout=0.2):
-    model = Sequential()
-    for li, units in enumerate(stack):
-        return_sequences = (li < len(stack) - 1)
-        if li == 0:
-            model.add(LSTM(units, return_sequences=return_sequences,
-                           input_shape=(lookback, n_features)))
-        else:
-            model.add(LSTM(units, return_sequences=return_sequences))
-        model.add(Dropout(dropout))
-    model.add(Dense(64, activation="relu"))
-    model.add(Dense(horizon * 2))  # predict (Close, Volume) × horizon
+def build_trained_model(lookback=60, n_features=2, horizon=5):
+    model = Sequential([
+        LSTM(128, return_sequences=True, input_shape=(lookback, n_features)),
+        Dropout(0.2),
+        LSTM(64, return_sequences=False),
+        Dropout(0.2),
+        Dense(64, activation="relu"),
+        Dense(horizon * 2)  # Close + Volume for each day
+    ])
     model.compile(optimizer="adam", loss="mse")
     return model
 
+# -------------------------------
+# Load trained model weights
+# -------------------------------
+@st.cache_resource
+def load_model(weights_path="lstm.weights.h5"):
+    model = build_trained_model(lookback=60, n_features=2, horizon=5)
+    try:
+        model.load_weights(weights_path)
+        st.success("✅ Loaded trained weights successfully.")
+    except Exception as e:
+        st.warning(f"⚠️ Could not load weights, using random init.\n\nError: {e}")
+    return model
+
+model = load_model("lstm.weights.h5")   # change to lstmN.weights.h5 if needed
+
+# -------------------------------
+# Helper Functions
+# -------------------------------
 def preprocess(df, lookback=60):
-    features = ["Close", "Volume"]
     scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(df[features])
-    last_seq = np.array([scaled[-lookback:]])  # shape (1, lookback, 2)
-    return last_seq, scaler
+    scaled = scaler.fit_transform(df[["Close", "Volume"]])
+    last_seq = scaled[-lookback:]  # last window
+    return scaler, np.array([last_seq])
 
-def forecast(model, seq, scaler, horizon=5):
-    y_pred = model.predict(seq).reshape(horizon, 2)  # (5, 2)
-    # inverse scale
-    pad = np.zeros((horizon, scaler.n_features_in_))
-    pad[:, 0] = y_pred[:, 0]  # Close
-    pad[:, 1] = y_pred[:, 1]  # Volume
-    inv = scaler.inverse_transform(pad)
-    pred_df = pd.DataFrame(inv, columns=["Close", "Volume"])
-    return pred_df
+def forecast_next_days(model, scaler, seq, horizon=5):
+    preds = model.predict(seq, verbose=0).reshape(horizon, 2)
+    inv = scaler.inverse_transform(preds)
+    return pd.DataFrame(inv, columns=["Pred_Close", "Pred_Volume"])
 
 # -------------------------------
-# Streamlit App Layout
+# Streamlit UI
 # -------------------------------
-st.set_page_config(page_title="LSTM Stock Forecast", layout="wide")
-st.title("📈 Stock Forecast — Close & Volume (LSTM)")
+st.set_page_config(page_title="📈 LSTM Stock Forecast", layout="wide")
+st.title("📈 Stock Price & Volume Prediction (LSTM)")
 
-# Sidebar
-st.sidebar.header("User Input")
+# Sidebar Inputs
 ticker = st.sidebar.text_input("Ticker", "AAPL")
-start_date = st.sidebar.date_input("Start Date", datetime(2015, 1, 1))
+start_date = st.sidebar.date_input("Start Date", datetime(2015,1,1))
 end_date = st.sidebar.date_input("End Date", datetime.today())
-lookback = st.sidebar.slider("Lookback (days)", 30, 120, 60)
+lookback = 60
 horizon = 5
 
-# Load data
-df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)
-if df.empty:
-    st.error("No data found for this ticker/date range.")
-    st.stop()
-
-df = df[["Close", "Volume"]].dropna()
-
-# Preprocess
-seq, scaler = preprocess(df, lookback)
-
-# Build + Load trained weights
-model = build_lstm_model(lookback=lookback, n_features=2, horizon=horizon, stack=(64, 64))
-try:
-    model.load_weights("lstmNishe.weights.h5")
-    st.success("✅ Loaded trained weights.")
-except Exception as e:
-    st.warning("⚠️ Could not load weights, using random init.")
-    st.text(str(e))
-
-# Run Prediction
 if st.sidebar.button("Run Forecast"):
-    pred_df = forecast(model, seq, scaler, horizon=horizon)
-    pred_df.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1),
-                                  periods=horizon, freq="B")
+    # Download Data
+    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)
+    df = df[["Close", "Volume"]].dropna()
 
-    st.subheader("Predicted Next 5 Days")
+    # Preprocess
+    scaler, seq = preprocess(df, lookback=lookback)
+
+    # Forecast
+    pred_df = forecast_next_days(model, scaler, seq, horizon=horizon)
+    pred_df.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=horizon, freq="B")
+
+    # Display Table
+    st.subheader("📊 Predicted Next 5 Days (Close & Volume)")
     st.write(pred_df)
 
-    # -------------------------------
     # Plot Close
-    # -------------------------------
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(df.index, df["Close"], label="Historical Close", color="blue")
-    ax.plot(pred_df.index, pred_df["Close"], marker="o", color="red", label="Predicted Close")
-    ax.set_title(f"{ticker} — Close Price Forecast")
-    ax.set_xlabel("Date"); ax.set_ylabel("Close Price")
-    ax.legend()
-    st.pyplot(fig)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
 
-    # -------------------------------
-    # Plot Volume
-    # -------------------------------
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(df.index, df["Volume"], label="Historical Volume", color="blue")
-    ax.plot(pred_df.index, pred_df["Volume"], marker="o", color="red", label="Predicted Volume")
-    ax.set_title(f"{ticker} — Volume Forecast")
-    ax.set_xlabel("Date"); ax.set_ylabel("Volume")
-    ax.legend()
+    # Close Plot
+    axes[0].plot(df.index, df["Close"], label="Historical Close", color="blue")
+    axes[0].plot(pred_df.index, pred_df["Pred_Close"], marker="o", color="red", label="Predicted Close")
+    axes[0].set_title(f"{ticker} — Close Price Forecast")
+    axes[0].set_ylabel("Close Price")
+    axes[0].legend()
+
+    # Volume Plot
+    axes[1].plot(df.index, df["Volume"], label="Historical Volume", color="blue")
+    axes[1].plot(pred_df.index, pred_df["Pred_Volume"], marker="o", color="red", label="Predicted Volume")
+    axes[1].set_title(f"{ticker} — Volume Forecast")
+    axes[1].set_xlabel("Date")
+    axes[1].set_ylabel("Volume")
+    axes[1].legend()
+
     st.pyplot(fig)
