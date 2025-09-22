@@ -231,35 +231,35 @@ if st.button("Train Model 🚀"):
     ax.set_title("Saliency Heatmap — Importance of Past Days")
     fig4.colorbar(im, ax=ax)
     st.pyplot(fig4)
+        # ===============================
+    # SHAP Explainability
+    # ===============================
+    import shap
+    st.subheader("🧠 Explainable AI — SHAP Explanation")
 
+    # Use last input window for explanation
+    last_window = scaled[-lookback:]
+    X_input = np.expand_dims(last_window, axis=0)
 
-import shap
+    # KernelExplainer (slow but works with black-box models)
+    explainer = shap.KernelExplainer(model.predict, X_train[:100])  # background = 100 samples
+    shap_values = explainer.shap_values(X_input, nsamples=50)  # keep nsamples low for speed
 
-# Explainability with SHAP
-st.subheader("🧠 Explainable AI — SHAP Explanation")
+    # Convert to DataFrame
+    shap_df = pd.DataFrame(
+        shap_values[0].reshape(lookback, -1),
+        columns=["Close", "Volume"],
+        index=df.index[-lookback:]
+    )
 
-# Use last input window for explanation
-last_window = scaled[-lookback:]
-X_input = np.expand_dims(last_window, axis=0)
+    st.write("📊 SHAP values for last 30 days (feature impact):")
+    st.dataframe(shap_df.tail(10))
 
-# SHAP KernelExplainer (model.predict works with numpy)
-explainer = shap.KernelExplainer(model.predict, X_train[:100])  # use a small background
-shap_values = explainer.shap_values(X_input, nsamples=100)
+    # SHAP summary plot
+    fig_shap, ax = plt.subplots(figsize=(10,5))
+    shap.summary_plot(shap_values, X_input, feature_names=["Close", "Volume"], show=False)
+    st.pyplot(fig_shap)
 
-# Convert to dataframe for readability
-shap_df = pd.DataFrame(
-    shap_values[0].reshape(lookback, -1), 
-    columns=["Close", "Volume"], 
-    index=df.index[-lookback:]
-)
-
-st.write("📊 SHAP values for last 30 days (feature impact):")
-st.dataframe(shap_df.tail(10))
-
-# Plot summary
-fig_shap, ax = plt.subplots(figsize=(10,5))
-shap.summary_plot(shap_values, X_input, feature_names=["Close", "Volume"], show=False)
-st.pyplot(fig_shap)
 
 
 
