@@ -151,7 +151,7 @@ if st.button("Train Model 🚀"):
         batch_size=batch_size, max_epochs=epochs, scaler=scaler
     )
 
-    st.success(f"✅ Model trained. RMSE Close: {metrics['RMSE_Close']:.2f}, RMSE Volume: {metrics['RMSE_Volume']:.2f}")
+   
 
     # Forecast future
     st.subheader(f"🔮 Forecast for next 5 days")
@@ -205,3 +205,4 @@ if st.button("Train Model 🚀"):
     ax[1].tick_params(axis="x", rotation=90)
 
     st.pyplot(fig4)
+
