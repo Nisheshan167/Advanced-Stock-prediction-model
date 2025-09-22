@@ -14,12 +14,13 @@ import shap
 # -----------------------
 # Rebuild Final Model Architecture
 # -----------------------
-def build_final_model(lookback=90, n_features=6, horizon=5):
+def build_final_model(lookback=90, horizon=5):
+    # IMPORTANT: use 6 features (Close, Volume, SMA_10, SMA_30, EMA_10, EMA_30)
     model = Sequential([
-        LSTM(64, input_shape=(lookback, n_features)),
+        LSTM(64, input_shape=(lookback, 6)),
         Dropout(0.1),
         Dense(64, activation="relu"),
-        Dense(horizon * 2)  # Close + Volume for 5 days
+        Dense(horizon * 2)  # predicting Close + Volume
     ])
     model.compile(optimizer="adam", loss="mse")
     return model
@@ -33,10 +34,10 @@ def load_trained_model(weights_path="lstm.weights.h5"):
 model = load_trained_model()
 
 # -----------------------
-# Functions
+# Helper Functions
 # -----------------------
 def add_indicators(df):
-    """Add SMA and EMA indicators."""
+    """Add SMA and EMA indicators to dataframe."""
     df["SMA_10"] = df["Close"].rolling(window=10).mean()
     df["SMA_30"] = df["Close"].rolling(window=30).mean()
     df["EMA_10"] = df["Close"].ewm(span=10, adjust=False).mean()
@@ -44,16 +45,17 @@ def add_indicators(df):
     return df.dropna()
 
 def preprocess(df, lookback=90):
-    """Scale data and create last lookback sequence."""
+    """Scale data and create last lookback sequence with 6 features."""
     features = ["Close", "Volume", "SMA_10", "SMA_30", "EMA_10", "EMA_30"]
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(df[features])
-    last_seq = np.array([scaled[-lookback:]])  # (1, lookback, n_features)
-    return last_seq, scaler, features
+    last_seq = np.array([scaled[-lookback:]])  # shape (1, lookback, 6)
+    return last_seq, scaler
 
 def forecast(model, seq, scaler, horizon=5):
     """Make forecast and inverse transform."""
     y_pred = model.predict(seq).reshape(horizon, 2)  # Close + Volume
+    # Pad predictions back into 6D space (other features = 0)
     pad = np.zeros((y_pred.shape[0], scaler.n_features_in_))
     pad[:, 0] = y_pred[:, 0]  # Close
     pad[:, 1] = y_pred[:, 1]  # Volume
@@ -86,7 +88,7 @@ if st.sidebar.button("Run Prediction"):
     # -----------------------
     # Preprocess & Predict
     # -----------------------
-    seq, scaler, features = preprocess(df, lookback=lookback)
+    seq, scaler = preprocess(df, lookback=lookback)
     pred_df = forecast(model, seq, scaler, horizon=horizon)
     pred_df.index = pd.date_range(df.index[-1] + pd.Timedelta(days=1),
                                   periods=horizon, freq="B")
