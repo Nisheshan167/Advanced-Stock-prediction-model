@@ -83,13 +83,15 @@ def forecast_future(model, data, lookback, horizon, scaler, steps=5):
 # Streamlit App
 # =====================================
 st.title("📈 Stock Price & Volume Prediction with LSTM")
-st.write("Lookback = 30 days, Horizon = 5 days")
+st.write("Lookback = 30 days, Horizon = 5 days (fixed)")
 
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
 forecast_days = st.sidebar.slider("Forecast Days Ahead", 1, 30, 5)
 
-# Fixed defaults
+# Fixed params
 lookback = 30
 horizon = 5
 batch_size = 32
@@ -98,7 +100,7 @@ optimizer = "adam"
 epochs = 50
 
 # Download data
-df = yf.download(ticker, start="2020-01-01", end=None, interval="1d", auto_adjust=True)
+df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
 df = df[["Close", "Volume"]].dropna()
 
 st.subheader(f"Data Preview ({ticker})")
@@ -161,4 +163,19 @@ if st.button("Train Model 🚀"):
     st.subheader(f"🔮 Forecast for next {forecast_days} days")
     future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=forecast_days)
     future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
-    st.line_chart(future_df)
+
+    # Table
+    st.dataframe(future_df)
+
+    # Separate charts
+    fig2, ax1 = plt.subplots(figsize=(10,4))
+    ax1.plot(future_df["Close"], marker="o", color="red")
+    ax1.set_title("Forecasted Close Price")
+    ax1.set_ylabel("Close Price")
+    st.pyplot(fig2)
+
+    fig3, ax2 = plt.subplots(figsize=(10,4))
+    ax2.plot(future_df["Volume"], marker="o", color="blue")
+    ax2.set_title("Forecasted Volume")
+    ax2.set_ylabel("Volume")
+    st.pyplot(fig3)
