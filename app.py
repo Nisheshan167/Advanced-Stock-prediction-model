@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,7 +5,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-import math, random, os, tensorflow as tf
+import math, random, tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
@@ -38,24 +37,7 @@ def build_lstm_model(lookback, n_features, horizon,
     if dense_units:
         model.add(Dense(dense_units, activation="relu"))
     model.add(Dense(horizon * n_features))
-
-    # Optimizer factory
-    if isinstance(optimizer, str):
-        if optimizer.lower() == "adam":
-            opt = tf.keras.optimizers.Adam(learning_rate=lr)
-        elif optimizer.lower() == "adamw":
-            try:
-                opt = tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4)
-            except:
-                opt = tf.keras.optimizers.experimental.AdamW(learning_rate=lr, weight_decay=1e-4)
-        elif optimizer.lower() == "rmsprop":
-            opt = tf.keras.optimizers.RMSprop(learning_rate=lr)
-        else:
-            opt = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9, nesterov=True)
-    else:
-        opt = optimizer
-
-    model.compile(optimizer=opt, loss="mse")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr), loss="mse")
     return model
 
 def train_and_eval(model, X_train, y_train, X_test, y_test, batch_size=32, max_epochs=50, scaler=None):
@@ -81,28 +63,42 @@ def train_and_eval(model, X_train, y_train, X_test, y_test, batch_size=32, max_e
 
     return hist, y_pred_real, y_test_real, {"RMSE_Close": rmse_close, "RMSE_Volume": rmse_vol}
 
+def forecast_future(model, data, lookback, horizon, scaler, steps=5):
+    last_window = data[-lookback:]
+    preds = []
+    current_input = last_window.copy()
+
+    for _ in range(steps):
+        X_input = np.expand_dims(current_input, axis=0)
+        y_pred = model.predict(X_input, verbose=0).reshape(horizon, -1)
+        preds.append(y_pred[0])   # take only first day of horizon
+        current_input = np.vstack([current_input[1:], y_pred[0]])
+    
+    preds = np.array(preds)
+    preds_real = scaler.inverse_transform(preds)
+    return preds_real
+
 
 # =====================================
 # Streamlit App
 # =====================================
 st.title("📈 Stock Price & Volume Prediction with LSTM")
-st.write("Enhanced LSTM model with lookback=30 days and horizon=5 days")
+st.write("Lookback = 30 days, Horizon = 5 days")
 
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2015-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+forecast_days = st.sidebar.slider("Forecast Days Ahead", 1, 30, 5)
+
+# Fixed defaults
 lookback = 30
 horizon = 5
-
-# Model params
-epochs = st.sidebar.slider("Epochs", 20, 200, 50, step=10)
-batch_size = st.sidebar.selectbox("Batch Size", [16, 32, 64, 128], index=1)
-lr = st.sidebar.selectbox("Learning Rate", [1e-3, 5e-4, 1e-4], index=0)
-optimizer = st.sidebar.selectbox("Optimizer", ["adam", "adamw", "rmsprop", "sgd"], index=0)
+batch_size = 32
+lr = 1e-3
+optimizer = "adam"
+epochs = 50
 
 # Download data
-df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
+df = yf.download(ticker, start="2020-01-01", end=None, interval="1d", auto_adjust=True)
 df = df[["Close", "Volume"]].dropna()
 
 st.subheader(f"Data Preview ({ticker})")
@@ -131,13 +127,19 @@ if st.button("Train Model 🚀"):
 
     st.success(f"✅ Model trained. RMSE Close: {metrics['RMSE_Close']:.2f}, RMSE Volume: {metrics['RMSE_Volume']:.2f}")
 
-    # Plot predictions
+    # Predictions vs Actual
     pred_close = y_pred_real.reshape(-1,2)[:,0]
     true_close = y_test_real.reshape(-1,2)[:,0]
     pred_volume = y_pred_real.reshape(-1,2)[:,1]
     true_volume = y_test_real.reshape(-1,2)[:,1]
 
     test_index = df.index[train_size+lookback: train_size+lookback+len(pred_close)]
+
+    # Fix mismatch
+    min_len = min(len(test_index), len(true_close), len(pred_close))
+    test_index = test_index[:min_len]
+    true_close, pred_close = true_close[:min_len], pred_close[:min_len]
+    true_volume, pred_volume = true_volume[:min_len], pred_volume[:min_len]
 
     fig, axes = plt.subplots(2,1, figsize=(12,8), sharex=True)
 
@@ -154,3 +156,9 @@ if st.button("Train Model 🚀"):
     axes[1].legend()
 
     st.pyplot(fig)
+
+    # Forecast future
+    st.subheader(f"🔮 Forecast for next {forecast_days} days")
+    future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=forecast_days)
+    future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
+    st.line_chart(future_df)
