@@ -12,6 +12,30 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
 # =====================================
 # Utility functions
+import tensorflow as tf
+
+def explain_prediction(model, input_window):
+    """
+    Compute saliency scores for the last lookback window.
+    input_window: shape (lookback, n_features)
+    """
+    input_tensor = tf.convert_to_tensor(
+        input_window.reshape(1, input_window.shape[0], input_window.shape[1]),
+        dtype=tf.float32
+    )
+    
+    with tf.GradientTape() as tape:
+        tape.watch(input_tensor)
+        prediction = model(input_tensor)
+        # Focus only on the Close price of the first forecast day
+        target = prediction[0, 0]  
+    
+    grads = tape.gradient(target, input_tensor).numpy()[0]
+    grads_abs = np.abs(grads)
+    grads_norm = grads_abs / (np.max(grads_abs) + 1e-8)  # normalize
+    
+    return grads_norm
+
 # =====================================
 def set_seed(seed=42):
     random.seed(seed); np.random.seed(seed); tf.random.set_seed(seed)
@@ -183,6 +207,32 @@ if st.button("Train Model 🚀"):
     ax2.set_title("Forecasted Volume")
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
+        # Explainability
+    st.subheader("🧠 Explainable AI — Feature Importance for Last 30 Days")
+    last_window = scaled[-lookback:]  # last 30 days of scaled input
+    importance = explain_prediction(model, last_window)
+
+    importance_df = pd.DataFrame(
+        importance, 
+        columns=["Close_importance", "Volume_importance"], 
+        index=df.index[-lookback:]
+    )
+
+    st.write("📊 Feature importance table (last 10 days shown):")
+    st.dataframe(importance_df.tail(10))
+
+    # Heatmap visualization
+    fig4, ax = plt.subplots(figsize=(12,5))
+    im = ax.imshow(importance.T, aspect="auto", cmap="Reds")
+    ax.set_yticks([0,1])
+    ax.set_yticklabels(["Close","Volume"])
+    ax.set_xticks(range(lookback))
+    ax.set_xticklabels(df.index[-lookback:].strftime("%Y-%m-%d"), rotation=90)
+    ax.set_title("Saliency Heatmap — Importance of Past Days")
+    fig4.colorbar(im, ax=ax)
+    st.pyplot(fig4)
+
+
 
 
 
