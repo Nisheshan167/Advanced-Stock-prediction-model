@@ -14,13 +14,12 @@ import shap
 # -----------------------
 # Rebuild Final Model Architecture
 # -----------------------
-def build_final_model(lookback=90, horizon=5):
-    # IMPORTANT: use 6 features (Close, Volume, SMA_10, SMA_30, EMA_10, EMA_30)
+def build_final_model(lookback=90, n_features=6, horizon=5):
     model = Sequential([
-        LSTM(64, input_shape=(lookback, 6)),
+        LSTM(64, input_shape=(lookback, n_features)),  # LSTM 64 units
         Dropout(0.1),
         Dense(64, activation="relu"),
-        Dense(horizon * 2)  # predicting Close + Volume
+        Dense(horizon * 2)  # 10 units (5 days × 2 outputs)
     ])
     model.compile(optimizer="adam", loss="mse")
     return model
@@ -135,3 +134,4 @@ if st.sidebar.button("Run Prediction"):
         "it indicates bullish momentum. If Volume also increases alongside rising prices, "
         "the upward trend is considered stronger."
     )
+
