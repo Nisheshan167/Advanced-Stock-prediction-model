@@ -54,7 +54,7 @@ if st.sidebar.button("Run Prediction"):
 
     last_seq = np.array([scaled[-lookback:]])  # shape (1, 60, 1)
 
-    model = load_model("lstm.weights.h5", lookback, horizon)
+    model = load_model("lstmNishe.weights.h5", lookback, horizon)
     pred_scaled = model.predict(last_seq, verbose=0).flatten()
     pred = scaler.inverse_transform(pred_scaled.reshape(-1,1)).flatten()
 
@@ -70,3 +70,4 @@ if st.sidebar.button("Run Prediction"):
     plt.title(f"{ticker} — Close Forecast (5-day)")
     plt.legend()
     st.pyplot(plt.gcf())
+
