@@ -180,6 +180,7 @@ if st.button("View Forecast 🚀"):
 
     st.metric(label="Recommendation", value=recommendation)
     st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
+
         # ---- Technical Indicators (under Recommendation) ----
     st.subheader("Technical Indicators")
 
@@ -191,32 +192,43 @@ if st.button("View Forecast 🚀"):
     ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
     ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
 
-    # RSI (14)
+    # RSI (14) with safe handling
     delta = ti["Close"].diff()
-    gain  = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
-    loss  = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
-    rs    = gain / (loss.replace(0, np.nan))
+    gain = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
+    loss = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
+    rs = gain / (loss.replace(0, np.nan) + 1e-9)
     ti["RSI"] = 100 - (100 / (1 + rs))
 
     # Clean for plotting
-    ma_plot  = ti[["Close", "SMA_20", "SMA_50"]].dropna()
+    ma_plot = ti[["Close", "SMA_20", "SMA_50"]].dropna()
     rsi_plot = ti[["RSI"]].dropna()
 
     if ma_plot.empty or rsi_plot.empty:
-        st.info(
-            "Not enough data to plot indicators yet "
-            "(need ≥50 days for SMA_50 and ≥14 days for RSI)."
-        )
+        st.info("Not enough data to plot indicators yet (need ≥50 days for SMA_50 and ≥14 days for RSI).")
     else:
+        # Plot SMA vs Close
         st.line_chart(ma_plot)
-        st.line_chart(rsi_plot)
+
+        # Plot RSI with thresholds (last 6 months)
+        rsi_recent = rsi_plot.last("180D")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(10,4))
+        ax.plot(rsi_recent.index, rsi_recent["RSI"], label="RSI (14)", color="blue")
+        ax.axhline(70, color="red", linestyle="--", label="Overbought (70)")
+        ax.axhline(30, color="green", linestyle="--", label="Oversold (30)")
+        ax.set_title("Relative Strength Index (14) – Last 6 Months")
+        ax.set_ylabel("RSI")
+        ax.legend()
+        st.pyplot(fig)
 
     st.subheader("📖 Explanations")
     st.markdown("""
     - **SMA 20 vs SMA 50**: Short vs long-term momentum.
-    - **RSI (14)**: Overbought (>70) / Oversold (<30).
+    - **RSI (14)**: Bounded 0–100. >70 = Overbought, <30 = Oversold.
     - **Recommendation**: Derived from model forecast + indicators.
     """)
+
+       
 
         
 
@@ -257,6 +269,7 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+
 
 
 
