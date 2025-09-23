@@ -194,18 +194,7 @@ if st.button("View Forecast 🚀"):
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
 
-    # Indicators
-    st.subheader("Technical Indicators")
-    st.line_chart(df[['Close', 'SMA_20', 'SMA_50']].dropna())
-    st.line_chart(df[['RSI']].dropna())
-
-    st.subheader("📖 Explanations")
-    st.markdown("""
-    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
-    - **RSI**: Identifies overbought (>70) or oversold (<30) conditions.
-    - **Recommendation**: Derived from model forecast + indicators.
-    """)
-
+  
     # Integrated Gradients Explainability
     st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
     last_window = scaled[-lookback:]  # last 30 days
@@ -225,3 +214,4 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+
