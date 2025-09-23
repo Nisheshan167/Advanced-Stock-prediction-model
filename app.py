@@ -182,40 +182,7 @@ if st.button("View Forecast 🚀"):
     st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
 
 
-        # ---- Technical Indicators (placed right under Recommendation) ----
-    st.subheader("Technical Indicators")
-
-    # Clean data to avoid plotting errors
-    plot_ma = (
-        df[['Close', 'SMA_20', 'SMA_50']]
-        .astype(float)
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
-    )
-
-    plot_rsi = (
-        df[['RSI']]
-        .astype(float)
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna()
-    )
-
-    # If not enough rows for MAs/RSI yet, show a friendly note
-    if plot_ma.empty or plot_rsi.empty:
-        st.info(
-            "Not enough data to plot indicators yet (need at least 50 days for SMA_50 and "
-            "14 days for RSI). Try widening the date range."
-        )
-    else:
-        st.line_chart(plot_ma)
-        st.line_chart(plot_rsi)
-
-    st.subheader("📖 Explanations")
-    st.markdown("""
-    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
-    - **RSI**: Overbought (>70) / Oversold (<30) oscillator.
-    - **Recommendation**: Derived from model forecast + indicators.
-    """)
+      
 
     
     # Charts
@@ -251,6 +218,7 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+
 
 
 
