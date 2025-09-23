@@ -130,9 +130,7 @@ gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
 rs = gain / loss
 df['RSI'] = 100 - (100 / (1 + rs))
-df['BB_Mid']   = df['SMA_20']
-df['BB_Upper'] = df['BB_Mid'] + 2*df['Close'].rolling(window=20).std()
-df['BB_Lower'] = df['BB_Mid'] - 2*df['Close'].rolling(window=20).std()
+
 
 st.subheader(f"Data Preview ({ticker})")
 st.dataframe(df.tail(5))
@@ -206,7 +204,6 @@ if st.button("View Forecast 🚀"):
     st.markdown("""
     - **SMA 20 vs SMA 50**: Short vs long-term momentum.
     - **RSI**: Identifies overbought (>70) or oversold (<30) conditions.
-    - **Bollinger Bands**: Price volatility relative to moving average.
     - **Recommendation**: Derived from model forecast + indicators.
     """)
 
@@ -229,3 +226,4 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+
