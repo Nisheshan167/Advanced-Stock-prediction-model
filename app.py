@@ -103,17 +103,64 @@ def integrated_gradients(model, input_window, baseline=None, steps=50):
     avg_grads = np.mean(grads, axis=0)
     integrated_grads = (input_window - baseline) * avg_grads
     return integrated_grads
+    
+# Calculate indicators
+data['SMA_20'] = data['Close'].rolling(window=20).mean()
+data['SMA_50'] = data['Close'].rolling(window=50).mean()
+
+delta = data['Close'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+rs = gain / loss
+data['RSI'] = 100 - (100 / (1 + rs))
+
+data['BB_Mid'] = data['SMA_20']
+data['BB_Upper'] = data['BB_Mid'] + 2*data['Close'].rolling(window=20).std()
+data['BB_Lower'] = data['BB_Mid'] - 2*data['Close'].rolling(window=20).std()
+
+def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
+    if forecast_price > latest_close and sma20 > sma50 and rsi < 70:
+        return "BUY"
+    elif forecast_price < latest_close and rsi > 70:
+        return "SELL"
+    else:
+        return "HOLD"
 
 # =====================================
 # Streamlit App
 # =====================================
-st.title("📈 Stock Price & Volume Prediction with LSTM + Integrated Gradients")
-st.write("Lookback = 30 days, Horizon = 5 days (fixed)")
+st.title("📈 Short-Term Prediction of Stock Closing Prices and Market Volumes")
+
 
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+
+st.subheader("Model Forecast & Recommendation")
+
+latest_close = data['Close'].iloc[-1]
+forecast_price = predictions[-1][0]   # adjust indexing if needed
+sma20 = data['SMA_20'].iloc[-1]
+sma50 = data['SMA_50'].iloc[-1]
+rsi = data['RSI'].iloc[-1]
+
+recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
+
+st.metric(label="Recommendation", value=recommendation)
+st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (30 days ahead): {forecast_price:.2f}")
+st.subheader("Technical Indicators")
+
+st.line_chart(data[['Close', 'SMA_20', 'SMA_50']].dropna())
+st.line_chart(data[['RSI']].dropna())
+st.line_chart(data[['Close', 'BB_Upper', 'BB_Lower']].dropna())
+st.subheader("📖 Explanations")
+st.markdown("""
+- **SMA 20 vs SMA 50**: Short vs long-term momentum.
+- **RSI**: Identifies overbought (>70) or oversold (<30) conditions.
+- **Bollinger Bands**: Price volatility relative to moving average.
+- **Recommendation**: Derived from model forecast + indicators.
+""")
 
 # Fixed params
 lookback = 30
@@ -140,7 +187,7 @@ X_train, X_test = X[:train_size], X[train_size:]
 y_train, y_test = y[:train_size], y[train_size:]
 
 # Train model button
-if st.button("Train Model 🚀"):
+if st.button("View Forecast 🚀"):
     set_seed(42)
     model = build_lstm_model(lookback, n_features=X.shape[2], horizon=horizon,
                              stack=(128,64), dropout=0.2, dense_units=64,
@@ -205,4 +252,5 @@ if st.button("Train Model 🚀"):
     ax[1].tick_params(axis="x", rotation=90)
 
     st.pyplot(fig4)
+
 
