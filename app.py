@@ -82,10 +82,6 @@ def forecast_future(model, data, lookback, horizon, scaler, steps=5):
 # Integrated Gradients Explainability
 # =====================================
 def integrated_gradients(model, input_window, baseline=None, steps=50):
-    """
-    Compute Integrated Gradients for a given input_window.
-    input_window: (lookback, features)
-    """
     if baseline is None:
         baseline = np.zeros_like(input_window)
 
@@ -103,20 +99,6 @@ def integrated_gradients(model, input_window, baseline=None, steps=50):
     avg_grads = np.mean(grads, axis=0)
     integrated_grads = (input_window - baseline) * avg_grads
     return integrated_grads
-    
-# Calculate indicators
-data['SMA_20'] = data['Close'].rolling(window=20).mean()
-data['SMA_50'] = data['Close'].rolling(window=50).mean()
-
-delta = data['Close'].diff()
-gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-rs = gain / loss
-data['RSI'] = 100 - (100 / (1 + rs))
-
-data['BB_Mid'] = data['SMA_20']
-data['BB_Upper'] = data['BB_Mid'] + 2*data['Close'].rolling(window=20).std()
-data['BB_Lower'] = data['BB_Mid'] - 2*data['Close'].rolling(window=20).std()
 
 def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
     if forecast_price > latest_close and sma20 > sma50 and rsi < 70:
@@ -131,36 +113,29 @@ def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
 # =====================================
 st.title("📈 Short-Term Prediction of Stock Closing Prices and Market Volumes")
 
-
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
 
-st.subheader("Model Forecast & Recommendation")
+# Download data
+df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
+df = df[["Close", "Volume"]].dropna()
 
-latest_close = data['Close'].iloc[-1]
-forecast_price = predictions[-1][0]   # adjust indexing if needed
-sma20 = data['SMA_20'].iloc[-1]
-sma50 = data['SMA_50'].iloc[-1]
-rsi = data['RSI'].iloc[-1]
+# Indicators
+df['SMA_20'] = df['Close'].rolling(window=20).mean()
+df['SMA_50'] = df['Close'].rolling(window=50).mean()
+delta = df['Close'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+rs = gain / loss
+df['RSI'] = 100 - (100 / (1 + rs))
+df['BB_Mid']   = df['SMA_20']
+df['BB_Upper'] = df['BB_Mid'] + 2*df['Close'].rolling(window=20).std()
+df['BB_Lower'] = df['BB_Mid'] - 2*df['Close'].rolling(window=20).std()
 
-recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
-
-st.metric(label="Recommendation", value=recommendation)
-st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (30 days ahead): {forecast_price:.2f}")
-st.subheader("Technical Indicators")
-
-st.line_chart(data[['Close', 'SMA_20', 'SMA_50']].dropna())
-st.line_chart(data[['RSI']].dropna())
-st.line_chart(data[['Close', 'BB_Upper', 'BB_Lower']].dropna())
-st.subheader("📖 Explanations")
-st.markdown("""
-- **SMA 20 vs SMA 50**: Short vs long-term momentum.
-- **RSI**: Identifies overbought (>70) or oversold (<30) conditions.
-- **Bollinger Bands**: Price volatility relative to moving average.
-- **Recommendation**: Derived from model forecast + indicators.
-""")
+st.subheader(f"Data Preview ({ticker})")
+st.dataframe(df.tail(5))
 
 # Fixed params
 lookback = 30
@@ -170,18 +145,10 @@ lr = 1e-3
 optimizer = "adam"
 epochs = 50
 
-# Download data
-df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
-df = df[["Close", "Volume"]].dropna()
-
-st.subheader(f"Data Preview ({ticker})")
-st.dataframe(df.tail(5))
-
 # Scale
 scaler = MinMaxScaler(feature_range=(0,1))
-scaled = scaler.fit_transform(df)
+scaled = scaler.fit_transform(df[["Close","Volume"]])
 X, y = create_sequences(scaled, lookback, horizon)
-
 train_size = int(len(X)*0.8)
 X_train, X_test = X[:train_size], X[train_size:]
 y_train, y_test = y[:train_size], y[train_size:]
@@ -198,21 +165,25 @@ if st.button("View Forecast 🚀"):
         batch_size=batch_size, max_epochs=epochs, scaler=scaler
     )
 
-   
-
-    # Forecast future
     st.subheader(f"🔮 Forecast for next 5 days")
     future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=5)
-
     future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
     last_date = df.index.max()
     future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=5, freq="B")
     future_df.index = future_dates
-
-    # Table with real dates
     st.dataframe(future_df)
 
-    # Separate charts
+    # Recommendation
+    latest_close = df['Close'].iloc[-1]
+    forecast_price = future_df['Close'].iloc[0]
+    sma20 = df['SMA_20'].iloc[-1]
+    sma50 = df['SMA_50'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
+    st.metric(label="Recommendation", value=recommendation)
+    st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
+
+    # Charts
     fig2, ax1 = plt.subplots(figsize=(10,4))
     ax1.plot(future_df.index, future_df["Close"], marker="o", color="red")
     ax1.set_title("Forecasted Close Price")
@@ -225,32 +196,36 @@ if st.button("View Forecast 🚀"):
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
 
+    # Indicators
+    st.subheader("Technical Indicators")
+    st.line_chart(df[['Close', 'SMA_20', 'SMA_50']].dropna())
+    st.line_chart(df[['RSI']].dropna())
+    st.line_chart(df[['Close', 'BB_Upper', 'BB_Lower']].dropna())
+
+    st.subheader("📖 Explanations")
+    st.markdown("""
+    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
+    - **RSI**: Identifies overbought (>70) or oversold (<30) conditions.
+    - **Bollinger Bands**: Price volatility relative to moving average.
+    - **Recommendation**: Derived from model forecast + indicators.
+    """)
+
     # Integrated Gradients Explainability
     st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
-
     last_window = scaled[-lookback:]  # last 30 days
     ig_attributions = integrated_gradients(model, last_window)
-
     ig_df = pd.DataFrame(
         ig_attributions,
         columns=["Close_importance", "Volume_importance"],
         index=df.index[-lookback:]
     )
-
     st.write("📊 Integrated Gradients attribution (last 10 days shown):")
     st.dataframe(ig_df.tail(10))
-
-    # Plot attributions
     fig4, ax = plt.subplots(2,1, figsize=(12,6), sharex=True)
-
     ax[0].bar(ig_df.index, ig_df["Close_importance"], color="red")
     ax[0].set_title("Attribution for Close")
     ax[0].tick_params(axis="x", rotation=90)
-
     ax[1].bar(ig_df.index, ig_df["Volume_importance"], color="blue")
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
-
     st.pyplot(fig4)
-
-
