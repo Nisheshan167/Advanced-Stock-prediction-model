@@ -269,6 +269,43 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+        # ===============================
+    # Natural Language Explanation
+    # ===============================
+    st.subheader("📝 What do these attributions mean?")
+
+    # Focus on last 10 days
+    last_close_importance = ig_df["Close_importance"].tail(10)
+    last_vol_importance   = ig_df["Volume_importance"].tail(10)
+
+    # Identify strongest drivers
+    top_close_day = last_close_importance.abs().idxmax()
+    top_close_val = last_close_importance.loc[top_close_day]
+
+    top_vol_day = last_vol_importance.abs().idxmax()
+    top_vol_val = last_vol_importance.loc[top_vol_day]
+
+    # Interpret signs
+    close_trend = "increased" if top_close_val > 0 else "decreased"
+    vol_trend   = "increased" if top_vol_val > 0 else "decreased"
+
+    # Generate explanation
+    st.markdown(f"""
+    - **Closing Price:**  
+      The model placed the strongest weight on **{top_close_day.date()}**, which 
+      {close_trend} the forecast for closing price.  
+      Recent days show larger positive values, meaning the forecast is **mainly driven by short-term momentum**.  
+
+    - **Trading Volume:**  
+      The most influential day was **{top_vol_day.date()}**, which 
+      {vol_trend} the forecasted volume.  
+      Volume attributions are smaller and more mixed, suggesting the model finds **volume harder to predict consistently**.  
+
+    ✅ In simple terms: **recent closing prices matter the most** for the forecast, while 
+    **volume signals are weaker and noisier**.
+    """)
+
+
 
 
 
