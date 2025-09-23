@@ -180,6 +180,55 @@ if st.button("View Forecast 🚀"):
 
     st.metric(label="Recommendation", value=recommendation)
     st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
+        # ---- Technical Indicators (under Recommendation) ----
+    st.subheader("Technical Indicators")
+
+    # Recompute indicators locally to avoid KeyError / dtype issues
+    ti = pd.DataFrame(index=df.index)
+    ti["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+
+    # SMAs with explicit minimums so we don't plot partial windows
+    ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
+    ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
+
+    # RSI (14) with safe divide
+    delta = ti["Close"].diff()
+    gain  = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
+    rs    = gain / (loss.replace(0, np.nan))
+    ti["RSI"] = 100 - (100 / (1 + rs))
+
+    # Clean for plotting
+    ma_plot  = (
+        ti[["Close", "SMA_20", "SMA_50"]]
+        .astype(float)
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    rsi_plot = (
+        ti[["RSI"]]
+        .astype(float)
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+
+    if ma_plot.empty or rsi_plot.empty:
+        st.info(
+            "Not enough data to plot indicators yet "
+            "(need ≥50 days for SMA_50 and ≥14 days for RSI). "
+            "Please widen the date range."
+        )
+    else:
+        st.line_chart(ma_plot)
+        st.line_chart(rsi_plot)
+
+    st.subheader("📖 Explanations")
+    st.markdown("""
+    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
+    - **RSI (14)**: Overbought (>70) / Oversold (<30).
+    - **Recommendation**: Derived from model forecast + indicators.
+    """)
+
 
 
       
@@ -218,6 +267,7 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
+
 
 
 
