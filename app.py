@@ -131,7 +131,6 @@ loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
 rs = gain / loss
 df['RSI'] = 100 - (100 / (1 + rs))
 
-
 st.subheader(f"Data Preview ({ticker})")
 st.dataframe(df.tail(5))
 
@@ -171,13 +170,14 @@ if st.button("View Forecast 🚀"):
     future_df.index = future_dates
     st.dataframe(future_df)
 
-    # Recommendation
-    latest_close = df['Close'].iloc[-1]
-    forecast_price = future_df['Close'].iloc[0]
-    sma20 = df['SMA_20'].iloc[-1]
-    sma50 = df['SMA_50'].iloc[-1]
-    rsi = df['RSI'].iloc[-1]
+    # Recommendation (force scalars)
+    latest_close   = float(df['Close'].iloc[-1])
+    forecast_price = float(future_df['Close'].iloc[0])
+    sma20          = float(df['SMA_20'].iloc[-1])
+    sma50          = float(df['SMA_50'].iloc[-1])
+    rsi            = float(df['RSI'].iloc[-1])
     recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
+
     st.metric(label="Recommendation", value=recommendation)
     st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
 
@@ -198,7 +198,6 @@ if st.button("View Forecast 🚀"):
     st.subheader("Technical Indicators")
     st.line_chart(df[['Close', 'SMA_20', 'SMA_50']].dropna())
     st.line_chart(df[['RSI']].dropna())
-    st.line_chart(df[['Close', 'BB_Upper', 'BB_Lower']].dropna())
 
     st.subheader("📖 Explanations")
     st.markdown("""
@@ -226,4 +225,3 @@ if st.button("View Forecast 🚀"):
     ax[1].set_title("Attribution for Volume")
     ax[1].tick_params(axis="x", rotation=90)
     st.pyplot(fig4)
-
