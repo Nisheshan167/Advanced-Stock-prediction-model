@@ -1,23 +1,25 @@
-import streamlit as st
-import pandas as pd
+import os
+import math
+import random
 import numpy as np
+import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
+import streamlit as st
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-import math, random, tensorflow as tf
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-import streamlit as st
 import openai
-import os
 
-# ---- OpenAI key loader (Streamlit secrets first, then env) ----
+# ===============================
+# OpenAI: key loader + reporter
+# ===============================
 def _init_openai_key():
     key = None
     try:
-        # Will work on Streamlit Cloud if you added the secret there
         if "OPENAI_API_KEY" in st.secrets:
             key = st.secrets["OPENAI_API_KEY"]
     except Exception:
@@ -27,13 +29,32 @@ def _init_openai_key():
     if key:
         openai.api_key = key
     else:
+        openai.api_key = None
         st.warning("⚠️ OPENAI_API_KEY not found in st.secrets or environment. GenAI analysis will be skipped.")
+
+def generate_report(forecast_summary: str, indicators: str, recommendation: str) -> str:
+    """LLM commentary on model outputs."""
+    if not openai.api_key:
+        return "ℹ️ GenAI commentary disabled (no API key found)."
+    prompt = f"""You are a financial analyst.
+Given the forecast summary: {forecast_summary},
+indicators: {indicators},
+and recommendation: {recommendation},
+write a clear, professional 2–3 paragraph market commentary for an investor audience."""
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return resp["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"⚠️ Error generating report: {e}"
+
 _init_openai_key()
 
-
-# =====================================
-# Utility functions
-# =====================================
+# ===============================
+# Utilities
+# ===============================
 def set_seed(seed=42):
     random.seed(seed); np.random.seed(seed); tf.random.set_seed(seed)
 
@@ -45,11 +66,11 @@ def create_sequences(data, lookback, horizon):
     return np.array(X), np.array(y)
 
 def build_lstm_model(lookback, n_features, horizon,
-                     stack=(128,64), dropout=0.2, dense_units=64,
+                     stack=(128, 64), dropout=0.2, dense_units=64,
                      optimizer="adam", lr=1e-3):
     model = Sequential()
     for li, units in enumerate(stack):
-        return_sequences = (li < len(stack)-1)
+        return_sequences = (li < len(stack) - 1)
         if li == 0:
             model.add(LSTM(units, return_sequences=return_sequences, input_shape=(lookback, n_features)))
         else:
@@ -79,36 +100,28 @@ def train_and_eval(model, X_train, y_train, X_test, y_test, batch_size=32, max_e
     y_pred_real = scaler.inverse_transform(y_pred_flat).reshape(y_pred.shape)
     y_test_real = scaler.inverse_transform(y_test_flat).reshape(y_test.shape)
 
-    rmse_close = math.sqrt(mean_squared_error(y_test_real[:,:,0].ravel(), y_pred_real[:,:,0].ravel()))
-    rmse_vol   = math.sqrt(mean_squared_error(y_test_real[:,:,1].ravel(), y_pred_real[:,:,1].ravel()))
-
+    rmse_close = math.sqrt(mean_squared_error(y_test_real[:, :, 0].ravel(), y_pred_real[:, :, 0].ravel()))
+    rmse_vol   = math.sqrt(mean_squared_error(y_test_real[:, :, 1].ravel(), y_pred_real[:, :, 1].ravel()))
     return hist, y_pred_real, y_test_real, {"RMSE_Close": rmse_close, "RMSE_Volume": rmse_vol}
 
 def forecast_future(model, data, lookback, horizon, scaler, steps=5):
     last_window = data[-lookback:]
     preds = []
     current_input = last_window.copy()
-
     for _ in range(steps):
         X_input = np.expand_dims(current_input, axis=0)
         y_pred = model.predict(X_input, verbose=0).reshape(horizon, -1)
-        preds.append(y_pred[0])   # take only first day of horizon
+        preds.append(y_pred[0])   # first day of horizon
         current_input = np.vstack([current_input[1:], y_pred[0]])
-    
     preds = np.array(preds)
     preds_real = scaler.inverse_transform(preds)
     return preds_real
 
-# =====================================
-# Integrated Gradients Explainability
-# =====================================
 def integrated_gradients(model, input_window, baseline=None, steps=50):
     if baseline is None:
         baseline = np.zeros_like(input_window)
-
     scaled_inputs = [baseline + (float(i)/steps)*(input_window-baseline) for i in range(steps+1)]
     grads = []
-
     for scaled in scaled_inputs:
         with tf.GradientTape() as tape:
             inp = tf.convert_to_tensor(scaled.reshape(1, *scaled.shape), dtype=tf.float32)
@@ -116,7 +129,6 @@ def integrated_gradients(model, input_window, baseline=None, steps=50):
             pred = model(inp)
             target = pred[0, 0]  # attribution wrt first forecasted Close price
         grads.append(tape.gradient(target, inp).numpy()[0])
-
     avg_grads = np.mean(grads, axis=0)
     integrated_grads = (input_window - baseline) * avg_grads
     return integrated_grads
@@ -129,9 +141,9 @@ def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
     else:
         return "HOLD"
 
-# =====================================
-# Streamlit App
-# =====================================
+# ===============================
+# App
+# ===============================
 st.title("📈 Short-Term Prediction of Stock Closing Prices and Market Volumes")
 
 # Sidebar
@@ -144,13 +156,13 @@ df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adj
 df = df[["Close", "Volume"]].dropna()
 
 # Indicators
-df['SMA_20'] = df['Close'].rolling(window=20).mean()
-df['SMA_50'] = df['Close'].rolling(window=50).mean()
-delta = df['Close'].diff()
+df["SMA_20"] = df["Close"].rolling(window=20).mean()
+df["SMA_50"] = df["Close"].rolling(window=50).mean()
+delta = df["Close"].diff()
 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-rs = gain / loss
-df['RSI'] = 100 - (100 / (1 + rs))
+rs = gain / (loss.replace(0, np.nan) + 1e-9)
+df["RSI"] = 100 - (100 / (1 + rs))
 
 st.subheader(f"Data Preview ({ticker})")
 st.dataframe(df.tail(5))
@@ -164,168 +176,14 @@ optimizer = "adam"
 epochs = 50
 
 # Scale
-scaler = MinMaxScaler(feature_range=(0,1))
-scaled = scaler.fit_transform(df[["Close","Volume"]])
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled = scaler.fit_transform(df[["Close", "Volume"]])
 X, y = create_sequences(scaled, lookback, horizon)
-train_size = int(len(X)*0.8)
+train_size = int(len(X) * 0.8)
 X_train, X_test = X[:train_size], X[train_size:]
 y_train, y_test = y[:train_size], y[train_size:]
 
-# Train model button
-if st.button("View Forecast 🚀"):
-    set_seed(42)
-    model = build_lstm_model(lookback, n_features=X.shape[2], horizon=horizon,
-                             stack=(128,64), dropout=0.2, dense_units=64,
-                             optimizer=optimizer, lr=lr)
-
-    hist, y_pred_real, y_test_real, metrics = train_and_eval(
-        model, X_train, y_train, X_test, y_test,
-        batch_size=batch_size, max_epochs=epochs, scaler=scaler
-    )
-
-    st.subheader(f"🔮 Forecast for next 5 days")
-    future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=5)
-    future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
-    last_date = df.index.max()
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=5, freq="B")
-    future_df.index = future_dates
-    st.dataframe(future_df)
-
-    # Recommendation (force scalars)
-    latest_close   = float(df['Close'].iloc[-1])
-    forecast_price = float(future_df['Close'].iloc[0])
-    sma20          = float(df['SMA_20'].iloc[-1])
-    sma50          = float(df['SMA_50'].iloc[-1])
-    rsi            = float(df['RSI'].iloc[-1])
-    recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
-
-    st.metric(label="Recommendation", value=recommendation)
-    st.write(f"Latest Close: {latest_close:.2f}, Forecast Price (next day): {forecast_price:.2f}")
-
-        # ---- Technical Indicators (under Recommendation) ----
-    st.subheader("Technical Indicators")
-
-    # Recompute indicators safely
-    ti = pd.DataFrame(index=df.index)
-    ti["Close"] = pd.to_numeric(df["Close"].squeeze(), errors="coerce")
-
-    # SMAs
-    ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
-    ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
-
-    # RSI (14) with safe handling
-    delta = ti["Close"].diff()
-    gain = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
-    loss = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
-    rs = gain / (loss.replace(0, np.nan) + 1e-9)
-    ti["RSI"] = 100 - (100 / (1 + rs))
-
-    # Clean for plotting
-    ma_plot = ti[["Close", "SMA_20", "SMA_50"]].dropna()
-    rsi_plot = ti[["RSI"]].dropna()
-
-    if ma_plot.empty or rsi_plot.empty:
-        st.info("Not enough data to plot indicators yet (need ≥50 days for SMA_50 and ≥14 days for RSI).")
-    else:
-        # Plot SMA vs Close
-        st.line_chart(ma_plot)
-
-        # Plot RSI with thresholds (last 6 months)
-        rsi_recent = rsi_plot.last("180D")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(10,4))
-        ax.plot(rsi_recent.index, rsi_recent["RSI"], label="RSI (14)", color="blue")
-        ax.axhline(70, color="red", linestyle="--", label="Overbought (70)")
-        ax.axhline(30, color="green", linestyle="--", label="Oversold (30)")
-        ax.set_title("Relative Strength Index (14) – Last 6 Months")
-        ax.set_ylabel("RSI")
-        ax.legend()
-        st.pyplot(fig)
-
-    st.subheader("📖 Explanations")
-    st.markdown("""
-    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
-    - **RSI (14)**: Bounded 0–100. >70 = Overbought, <30 = Oversold.
-    - **Recommendation**: Derived from model forecast + indicators.
-    """)
-
-       
-
-        
-
-
-      
-
-    
-    # Charts
-    fig2, ax1 = plt.subplots(figsize=(10,4))
-    ax1.plot(future_df.index, future_df["Close"], marker="o", color="red")
-    ax1.set_title("Forecasted Close Price")
-    ax1.set_ylabel("Close Price")
-    st.pyplot(fig2)
-
-    fig3, ax2 = plt.subplots(figsize=(10,4))
-    ax2.plot(future_df.index, future_df["Volume"], marker="o", color="blue")
-    ax2.set_title("Forecasted Volume")
-    ax2.set_ylabel("Volume")
-    st.pyplot(fig3)
-
-  
-    # Integrated Gradients Explainability
-    st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
-    last_window = scaled[-lookback:]  # last 30 days
-    ig_attributions = integrated_gradients(model, last_window)
-    ig_df = pd.DataFrame(
-        ig_attributions,
-        columns=["Close_importance", "Volume_importance"],
-        index=df.index[-lookback:]
-    )
-    st.write("📊 Integrated Gradients attribution (last 10 days shown):")
-    st.dataframe(ig_df.tail(10))
-    fig4, ax = plt.subplots(2,1, figsize=(12,6), sharex=True)
-    ax[0].bar(ig_df.index, ig_df["Close_importance"], color="red")
-    ax[0].set_title("Attribution for Close")
-    ax[0].tick_params(axis="x", rotation=90)
-    ax[1].bar(ig_df.index, ig_df["Volume_importance"], color="blue")
-    ax[1].set_title("Attribution for Volume")
-    ax[1].tick_params(axis="x", rotation=90)
-    st.pyplot(fig4)
-        # ===============================
-    # Natural Language Explanation
-    # ===============================
-    st.subheader("📝 What do these attributions mean?")
-
-    # Focus on last 10 days
-    last_close_importance = ig_df["Close_importance"].tail(10)
-    last_vol_importance   = ig_df["Volume_importance"].tail(10)
-
-    # Identify strongest drivers
-    top_close_day = last_close_importance.abs().idxmax()
-    top_close_val = last_close_importance.loc[top_close_day]
-
-    top_vol_day = last_vol_importance.abs().idxmax()
-    top_vol_val = last_vol_importance.loc[top_vol_day]
-
-    # Interpret signs
-    close_trend = "increased" if top_close_val > 0 else "decreased"
-    vol_trend   = "increased" if top_vol_val > 0 else "decreased"
-
-    # Generate explanation
-    st.markdown(f"""
-    - **Closing Price:**  
-      The model placed the strongest weight on **{top_close_day.date()}**, which 
-      {close_trend} the forecast for closing price.  
-      Recent days show larger positive values, meaning the forecast is **mainly driven by short-term momentum**.  
-
-    - **Trading Volume:**  
-      The most influential day was **{top_vol_day.date()}**, which 
-      {vol_trend} the forecasted volume.  
-      Volume attributions are smaller and more mixed, suggesting the model finds **volume harder to predict consistently**.  
-
-    ✅ In simple terms: **recent closing prices matter the most** for the forecast, while 
-    **volume signals are weaker and noisier**.
-    """)
-    # Train model button
+# ========= Single button (no duplicates) =========
 if st.button("View Forecast 🚀"):
     set_seed(42)
     model = build_lstm_model(
@@ -347,36 +205,29 @@ if st.button("View Forecast 🚀"):
     future_df.index = future_dates
     st.dataframe(future_df)
 
-    # Recommendation inputs (as scalars)
-    latest_close   = float(df['Close'].iloc[-1])
-    forecast_price = float(future_df['Close'].iloc[0])
-    sma20          = float(df['SMA_20'].iloc[-1])
-    sma50          = float(df['SMA_50'].iloc[-1])
-    rsi            = float(df['RSI'].iloc[-1])
+    # Recommendation inputs (scalars)
+    latest_close   = float(df["Close"].iloc[-1])
+    forecast_price = float(future_df["Close"].iloc[0])
+    sma20          = float(df["SMA_20"].iloc[-1])
+    sma50          = float(df["SMA_50"].iloc[-1])
+    rsi            = float(df["RSI"].iloc[-1])
     recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
 
     st.metric(label="Recommendation", value=recommendation)
     st.write(f"Latest Close: {latest_close:.2f} | Forecast (next day): {forecast_price:.2f}")
 
-    # ---- Technical Indicators (under Recommendation) ----
+    # Technical Indicators
     st.subheader("Technical Indicators")
-
-    # Recompute indicators safely
     ti = pd.DataFrame(index=df.index)
     ti["Close"] = pd.to_numeric(df["Close"].squeeze(), errors="coerce")
-
-    # SMAs
     ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
     ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
-
-    # RSI (14) with safe handling
     delta = ti["Close"].diff()
     gain = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
     loss = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
     rs = gain / (loss.replace(0, np.nan) + 1e-9)
     ti["RSI"] = 100 - (100 / (1 + rs))
 
-    # Clean for plotting
     ma_plot = ti[["Close", "SMA_20", "SMA_50"]].dropna()
     rsi_plot = ti[["RSI"]].dropna()
 
@@ -384,7 +235,6 @@ if st.button("View Forecast 🚀"):
         st.info("Not enough data to plot indicators yet (need ≥50 days for SMA_50 and ≥14 days for RSI).")
     else:
         st.line_chart(ma_plot)
-
         rsi_recent = rsi_plot.last("180D")
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(rsi_recent.index, rsi_recent["RSI"], label="RSI (14)")
@@ -398,11 +248,11 @@ if st.button("View Forecast 🚀"):
     st.subheader("📖 Explanations")
     st.markdown("""
     - **SMA 20 vs SMA 50**: Short vs long-term momentum.
-    - **RSI (14)**: Bounded 0–100. >70 = Overbought, <30 = Oversold.
-    - **Recommendation**: Derived from model forecast + indicators.
+    - **RSI (14)**: >70 = Overbought, <30 = Oversold.
+    - **Recommendation**: From model forecast + indicators.
     """)
 
-    # Charts
+    # Forecast charts
     fig2, ax1 = plt.subplots(figsize=(10, 4))
     ax1.plot(future_df.index, future_df["Close"], marker="o")
     ax1.set_title("Forecasted Close Price")
@@ -415,7 +265,7 @@ if st.button("View Forecast 🚀"):
     ax2.set_ylabel("Volume")
     st.pyplot(fig3)
 
-    # Integrated Gradients Explainability
+    # Explainability (Integrated Gradients)
     st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
     last_window = scaled[-lookback:]  # last 30 days
     ig_attributions = integrated_gradients(model, last_window)
@@ -424,7 +274,7 @@ if st.button("View Forecast 🚀"):
         columns=["Close_importance", "Volume_importance"],
         index=df.index[-lookback:]
     )
-    st.write("📊 Integrated Gradients attribution (last 10 days shown):")
+    st.write("📊 Integrated Gradients attribution (last 10 days):")
     st.dataframe(ig_df.tail(10))
 
     fig4, ax = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
@@ -440,8 +290,6 @@ if st.button("View Forecast 🚀"):
     # GenAI Natural-Language Analysis
     # ===============================
     st.subheader("📝 GenAI Analysis")
-
-    # Build concise, data-driven context for GPT
     five_day_avg = float(future_df["Close"].mean())
     indicators_text = (
         f"SMA20={sma20:.2f}, SMA50={sma50:.2f}, RSI={rsi:.1f}, "
@@ -451,51 +299,5 @@ if st.button("View Forecast 🚀"):
         f"{ticker}: Next-day close {forecast_price:.2f} vs latest {latest_close:.2f}. "
         f"5-day mean path {five_day_avg:.2f}."
     )
-
-    # Only call GPT if key is present
-    if openai.api_key:
-        genai_report = generate_report(forecast_summary, indicators_text, recommendation)
-        st.write(genai_report)
-    else:
-        st.info("Set OPENAI_API_KEY in secrets or environment to enable GenAI commentary.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    genai_report = generate_report(forecast_summary, indicators_text, recommendation)
+    st.write(genai_report)
