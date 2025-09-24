@@ -17,7 +17,12 @@ import openai
 # ===============================
 # OpenAI: key loader + reporter
 # ===============================
-def _init_openai_key():
+from openai import OpenAI
+
+# ===============================
+# OpenAI init + reporter
+# ===============================
+def _init_openai_client():
     key = None
     try:
         if "OPENAI_API_KEY" in st.secrets:
@@ -26,15 +31,17 @@ def _init_openai_key():
         pass
     if not key:
         key = os.getenv("OPENAI_API_KEY")
-    if key:
-        openai.api_key = key
-    else:
-        openai.api_key = None
+
+    if not key:
         st.warning("⚠️ OPENAI_API_KEY not found in st.secrets or environment. GenAI analysis will be skipped.")
+        return None
+    return OpenAI(api_key=key)
+
+client = _init_openai_client()
 
 def generate_report(forecast_summary: str, indicators: str, recommendation: str) -> str:
     """LLM commentary on model outputs."""
-    if not openai.api_key:
+    if not client:
         return "ℹ️ GenAI commentary disabled (no API key found)."
     prompt = f"""You are a financial analyst.
 Given the forecast summary: {forecast_summary},
@@ -42,13 +49,14 @@ indicators: {indicators},
 and recommendation: {recommendation},
 write a clear, professional 2–3 paragraph market commentary for an investor audience."""
     try:
-        resp = openai.ChatCompletion.create(
-            model="gpt-4",
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",   # or "gpt-4o", "gpt-4-turbo"
             messages=[{"role": "user", "content": prompt}]
         )
-        return resp["choices"][0]["message"]["content"]
+        return resp.choices[0].message.content
     except Exception as e:
         return f"⚠️ Error generating report: {e}"
+
 
 _init_openai_key()
 
@@ -301,3 +309,4 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
