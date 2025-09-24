@@ -13,27 +13,23 @@ import streamlit as st
 import openai
 import os
 
-# ---- Setup API Key ----
-# Make sure you set your OpenAI API key in your environment:
-# export OPENAI_API_KEY="your_key_here"
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# ---- Function to Generate Commentary with GPT ----
-def generate_report(forecast_summary, indicators, recommendation):
-    prompt = f"""
-    Given the forecast summary: {forecast_summary},
-    indicators: {indicators},
-    and recommendation: {recommendation},
-    write a professional financial market analysis (2–3 paragraphs).
-    """
+# ---- OpenAI key loader (Streamlit secrets first, then env) ----
+def _init_openai_key():
+    key = None
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"⚠️ Error generating report: {e}"
+        # Will work on Streamlit Cloud if you added the secret there
+        if "OPENAI_API_KEY" in st.secrets:
+            key = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        pass
+    if not key:
+        key = os.getenv("OPENAI_API_KEY")
+    if key:
+        openai.api_key = key
+    else:
+        st.warning("⚠️ OPENAI_API_KEY not found in st.secrets or environment. GenAI analysis will be skipped.")
+_init_openai_key()
+
 
 # =====================================
 # Utility functions
@@ -329,15 +325,141 @@ if st.button("View Forecast 🚀"):
     ✅ In simple terms: **recent closing prices matter the most** for the forecast, while 
     **volume signals are weaker and noisier**.
     """)
-    st.title("Stock Forecasting App with GenAI Insights")
-    forecast_summary = "The LSTM model predicts an upward trend for the next 5 days."
-    indicators = "RSI = 65, MACD = Bullish crossover, Volume = Increasing"
-    recommendation = "Buy"
-    st.subheader("Model Prediction Summary")
-    st.write(forecast_summary)
-    st.subheader("GenAI Analysis")
-    genai_report = generate_report(forecast_summary, indicators, recommendation)
-    st.write(genai_report)
+    # Train model button
+if st.button("View Forecast 🚀"):
+    set_seed(42)
+    model = build_lstm_model(
+        lookback, n_features=X.shape[2], horizon=horizon,
+        stack=(128, 64), dropout=0.2, dense_units=64,
+        optimizer=optimizer, lr=lr
+    )
+
+    hist, y_pred_real, y_test_real, metrics = train_and_eval(
+        model, X_train, y_train, X_test, y_test,
+        batch_size=batch_size, max_epochs=epochs, scaler=scaler
+    )
+
+    st.subheader("🔮 Forecast for next 5 days")
+    future_preds = forecast_future(model, scaled, lookback, horizon, scaler, steps=5)
+    future_df = pd.DataFrame(future_preds, columns=["Close", "Volume"])
+    last_date = df.index.max()
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=5, freq="B")
+    future_df.index = future_dates
+    st.dataframe(future_df)
+
+    # Recommendation inputs (as scalars)
+    latest_close   = float(df['Close'].iloc[-1])
+    forecast_price = float(future_df['Close'].iloc[0])
+    sma20          = float(df['SMA_20'].iloc[-1])
+    sma50          = float(df['SMA_50'].iloc[-1])
+    rsi            = float(df['RSI'].iloc[-1])
+    recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
+
+    st.metric(label="Recommendation", value=recommendation)
+    st.write(f"Latest Close: {latest_close:.2f} | Forecast (next day): {forecast_price:.2f}")
+
+    # ---- Technical Indicators (under Recommendation) ----
+    st.subheader("Technical Indicators")
+
+    # Recompute indicators safely
+    ti = pd.DataFrame(index=df.index)
+    ti["Close"] = pd.to_numeric(df["Close"].squeeze(), errors="coerce")
+
+    # SMAs
+    ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
+    ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
+
+    # RSI (14) with safe handling
+    delta = ti["Close"].diff()
+    gain = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
+    loss = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
+    rs = gain / (loss.replace(0, np.nan) + 1e-9)
+    ti["RSI"] = 100 - (100 / (1 + rs))
+
+    # Clean for plotting
+    ma_plot = ti[["Close", "SMA_20", "SMA_50"]].dropna()
+    rsi_plot = ti[["RSI"]].dropna()
+
+    if ma_plot.empty or rsi_plot.empty:
+        st.info("Not enough data to plot indicators yet (need ≥50 days for SMA_50 and ≥14 days for RSI).")
+    else:
+        st.line_chart(ma_plot)
+
+        rsi_recent = rsi_plot.last("180D")
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(rsi_recent.index, rsi_recent["RSI"], label="RSI (14)")
+        ax.axhline(70, linestyle="--", label="Overbought (70)")
+        ax.axhline(30, linestyle="--", label="Oversold (30)")
+        ax.set_title("Relative Strength Index (14) – Last 6 Months")
+        ax.set_ylabel("RSI")
+        ax.legend()
+        st.pyplot(fig)
+
+    st.subheader("📖 Explanations")
+    st.markdown("""
+    - **SMA 20 vs SMA 50**: Short vs long-term momentum.
+    - **RSI (14)**: Bounded 0–100. >70 = Overbought, <30 = Oversold.
+    - **Recommendation**: Derived from model forecast + indicators.
+    """)
+
+    # Charts
+    fig2, ax1 = plt.subplots(figsize=(10, 4))
+    ax1.plot(future_df.index, future_df["Close"], marker="o")
+    ax1.set_title("Forecasted Close Price")
+    ax1.set_ylabel("Close Price")
+    st.pyplot(fig2)
+
+    fig3, ax2 = plt.subplots(figsize=(10, 4))
+    ax2.plot(future_df.index, future_df["Volume"], marker="o")
+    ax2.set_title("Forecasted Volume")
+    ax2.set_ylabel("Volume")
+    st.pyplot(fig3)
+
+    # Integrated Gradients Explainability
+    st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
+    last_window = scaled[-lookback:]  # last 30 days
+    ig_attributions = integrated_gradients(model, last_window)
+    ig_df = pd.DataFrame(
+        ig_attributions,
+        columns=["Close_importance", "Volume_importance"],
+        index=df.index[-lookback:]
+    )
+    st.write("📊 Integrated Gradients attribution (last 10 days shown):")
+    st.dataframe(ig_df.tail(10))
+
+    fig4, ax = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    ax[0].bar(ig_df.index, ig_df["Close_importance"])
+    ax[0].set_title("Attribution for Close")
+    ax[0].tick_params(axis="x", rotation=90)
+    ax[1].bar(ig_df.index, ig_df["Volume_importance"])
+    ax[1].set_title("Attribution for Volume")
+    ax[1].tick_params(axis="x", rotation=90)
+    st.pyplot(fig4)
+
+    # ===============================
+    # GenAI Natural-Language Analysis
+    # ===============================
+    st.subheader("📝 GenAI Analysis")
+
+    # Build concise, data-driven context for GPT
+    five_day_avg = float(future_df["Close"].mean())
+    indicators_text = (
+        f"SMA20={sma20:.2f}, SMA50={sma50:.2f}, RSI={rsi:.1f}, "
+        f"NextDayVolume={float(future_df['Volume'].iloc[0]):.0f}"
+    )
+    forecast_summary = (
+        f"{ticker}: Next-day close {forecast_price:.2f} vs latest {latest_close:.2f}. "
+        f"5-day mean path {five_day_avg:.2f}."
+    )
+
+    # Only call GPT if key is present
+    if openai.api_key:
+        genai_report = generate_report(forecast_summary, indicators_text, recommendation)
+        st.write(genai_report)
+    else:
+        st.info("Set OPENAI_API_KEY in secrets or environment to enable GenAI commentary.")
+
+
 
 
 
@@ -361,6 +483,7 @@ if st.button("View Forecast 🚀"):
 
 
  
+
 
 
 
