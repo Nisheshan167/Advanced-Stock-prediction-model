@@ -124,20 +124,31 @@ def forecast_future(model, data, lookback, horizon, scaler, steps=5):
     return preds_real
 
 def integrated_gradients(model, input_window, baseline=None, steps=50):
+    """
+    Integrated Gradients for LSTM inputs.
+    input_window: shape (lookback, n_features)
+    """
     if baseline is None:
         baseline = np.zeros_like(input_window)
+
+    # Scale between baseline and input
     scaled_inputs = [baseline + (float(i)/steps)*(input_window-baseline) for i in range(steps+1)]
     grads = []
+
     for scaled in scaled_inputs:
         with tf.GradientTape() as tape:
+            # Reshape to (1, lookback, n_features)
             inp = tf.convert_to_tensor(scaled.reshape(1, *scaled.shape), dtype=tf.float32)
             tape.watch(inp)
             pred = model(inp)
-            target = pred[0, 0]  # attribution wrt first forecasted Close price
+            # take first forecasted Close price as target
+            target = pred[:, 0]  
         grads.append(tape.gradient(target, inp).numpy()[0])
+
     avg_grads = np.mean(grads, axis=0)
     integrated_grads = (input_window - baseline) * avg_grads
     return integrated_grads
+
 
 def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
     if forecast_price > latest_close and sma20 > sma50 and rsi < 70:
@@ -308,3 +319,4 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
