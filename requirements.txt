@@ -6,5 +6,6 @@ matplotlib
 seaborn
 scikit-learn
 tensorflow
-openai
+openai>=1.0.0
 shap
+
