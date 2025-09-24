@@ -12,7 +12,6 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import streamlit as st
 import openai
 import os
-import os, openai
 
 # ---- Setup API Key ----
 # Make sure you set your OpenAI API key in your environment:
@@ -362,6 +361,7 @@ if st.button("View Forecast 🚀"):
 
 
  
+
 
 
 
