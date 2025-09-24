@@ -37,8 +37,6 @@ def _init_openai_client():
         return None
     return OpenAI(api_key=key)
 
-client = _init_openai_client()
-
 def generate_report(forecast_summary: str, indicators: str, recommendation: str) -> str:
     """LLM commentary on model outputs."""
     if not client:
@@ -309,4 +307,5 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
 
