@@ -38,8 +38,7 @@ def _init_openai_client():
     return OpenAI(api_key=key)
 
 def generate_report(forecast_summary: str, indicators: str, recommendation: str) -> str:
-    """LLM commentary on model outputs."""
-    if not client:
+    if client is None:
         return "ℹ️ GenAI commentary disabled (no API key found)."
     prompt = f"""You are a financial analyst.
 Given the forecast summary: {forecast_summary},
@@ -305,6 +304,7 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
 
 
 
