@@ -9,6 +9,31 @@ import math, random, tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+import streamlit as st
+import openai
+import os
+
+# ---- Setup API Key ----
+# Make sure you set your OpenAI API key in your environment:
+# export OPENAI_API_KEY="your_key_here"
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# ---- Function to Generate Commentary with GPT ----
+def generate_report(forecast_summary, indicators, recommendation):
+    prompt = f"""
+    Given the forecast summary: {forecast_summary},
+    indicators: {indicators},
+    and recommendation: {recommendation},
+    write a professional financial market analysis (2–3 paragraphs).
+    """
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"⚠️ Error generating report: {e}"
 
 # =====================================
 # Utility functions
@@ -304,6 +329,42 @@ if st.button("View Forecast 🚀"):
     ✅ In simple terms: **recent closing prices matter the most** for the forecast, while 
     **volume signals are weaker and noisier**.
     """)
+    st.title("Stock Forecasting App with GenAI Insights")
+    forecast_summary = "The LSTM model predicts an upward trend for the next 5 days."
+    indicators = "RSI = 65, MACD = Bullish crossover, Volume = Increasing"
+    recommendation = "Buy"
+    st.subheader("Model Prediction Summary")
+    st.write(forecast_summary)
+    st.subheader("GenAI Analysis")
+    genai_report = generate_report(forecast_summary, indicators, recommendation)
+    st.write(genai_report)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
 
 
 
