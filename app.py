@@ -13,26 +13,26 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
-
+# ===============================
+# OpenAI (>=1.0) client
+# ===============================
 from openai import OpenAI
 
 def _init_openai_client():
     key = None
     try:
-        if "OPENAI_API_KEY" in st.secrets:   # Streamlit Cloud secrets
+        if "OPENAI_API_KEY" in st.secrets:   # Streamlit Cloud
             key = st.secrets["OPENAI_API_KEY"]
     except Exception:
         pass
     if not key:
-        key = os.getenv("OPENAI_API_KEY")    # fallback for local dev
+        key = os.getenv("OPENAI_API_KEY")    # local/CI fallback
 
     if not key:
         st.warning("⚠️ OPENAI_API_KEY not found. GenAI analysis will be skipped.")
         return None
-
     return OpenAI(api_key=key)
 
-# create global client once
 client: OpenAI | None = _init_openai_client()
 
 def generate_report(forecast_summary: str, indicators: str, recommendation: str) -> str:
@@ -48,15 +48,19 @@ write a clear, professional 2–3 paragraph market commentary for an investor au
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",   # or "gpt-4o", "gpt-4-turbo"
+            model="gpt-4o-mini",             # or "gpt-4o", "gpt-4-turbo"
             messages=[{"role": "user", "content": prompt}]
         )
         return resp.choices[0].message.content
     except Exception as e:
+        msg = str(e)
+        if "insufficient_quota" in msg or "429" in msg:
+            return "ℹ️ GenAI commentary unavailable (API quota/billing not active)."
         return f"⚠️ Error generating report: {e}"
 
-
-
+# ===============================
+# Utilities
+# ===============================
 def set_seed(seed=42):
     random.seed(seed); np.random.seed(seed); tf.random.set_seed(seed)
 
@@ -127,24 +131,26 @@ def integrated_gradients(model, input_window, baseline=None, steps=50):
     if baseline is None:
         baseline = np.zeros_like(input_window)
 
-    # Scale between baseline and input
     scaled_inputs = [baseline + (float(i)/steps)*(input_window-baseline) for i in range(steps+1)]
     grads = []
 
     for scaled in scaled_inputs:
+        # (1, lookback, features)
+        inp = tf.convert_to_tensor(scaled.reshape(1, *scaled.shape), dtype=tf.float32)
         with tf.GradientTape() as tape:
-            # Reshape to (1, lookback, n_features)
-            inp = tf.convert_to_tensor(scaled.reshape(1, *scaled.shape), dtype=tf.float32)
             tape.watch(inp)
-            pred = model(inp)
-            # take first forecasted Close price as target
-            target = pred[:, 0]  
-        grads.append(tape.gradient(target, inp).numpy()[0])
+            # safe call under tape
+            pred = model(inp, training=False)      # shape: (1, horizon * n_features)
+            # Take the first predicted CLOSE value as target:
+            # Our output layer is Dense(horizon * n_features) flattened.
+            # Index 0 corresponds to next-step CLOSE when features order is [Close, Volume].
+            target = pred[:, 0]
+        grad = tape.gradient(target, inp).numpy()[0]
+        grads.append(grad)
 
     avg_grads = np.mean(grads, axis=0)
     integrated_grads = (input_window - baseline) * avg_grads
     return integrated_grads
-
 
 def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
     if forecast_price > latest_close and sma20 > sma50 and rsi < 70:
@@ -154,22 +160,25 @@ def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
     else:
         return "HOLD"
 
-
-
+# ===============================
+# App
+# ===============================
 st.title("📈 Short-Term Prediction of Stock Closing Prices and Market Volumes")
 
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+end_date   = st.sidebar.date_input("End Date", pd.to_datetime("today"))
 
-# Fetch company info
-ticker_obj = yf.Ticker(ticker)
-company_name = ticker_obj.info.get("longName", ticker)   # fallback to ticker if not found
-currency = ticker_obj.info.get("currency", "N/A")        # e.g., "USD", "INR"
+# Company info (name + currency)
+try:
+    tkr = yf.Ticker(ticker)
+    company_name = tkr.info.get("longName", ticker)
+    currency = tkr.info.get("currency", "N/A")
+except Exception:
+    company_name, currency = ticker, "N/A"
 
 st.subheader(f"Data Preview – {company_name} ({ticker}, {currency})")
-
 
 # Download data
 df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
@@ -184,12 +193,11 @@ loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
 rs = gain / (loss.replace(0, np.nan) + 1e-9)
 df["RSI"] = 100 - (100 / (1 + rs))
 
-st.subheader(f"Data Preview ({ticker})")
 st.dataframe(df.tail(5))
 
 # Fixed params
 lookback = 30
-horizon = 5
+horizon  = 5
 batch_size = 32
 lr = 1e-3
 optimizer = "adam"
@@ -203,7 +211,7 @@ train_size = int(len(X) * 0.8)
 X_train, X_test = X[:train_size], X[train_size:]
 y_train, y_test = y[:train_size], y[train_size:]
 
-# ========= Single button (no duplicates) =========
+# ========= Single button =========
 if st.button("View Forecast 🚀"):
     set_seed(42)
     model = build_lstm_model(
@@ -225,7 +233,7 @@ if st.button("View Forecast 🚀"):
     future_df.index = future_dates
     st.dataframe(future_df)
 
-    # Recommendation inputs (scalars)
+    # Recommendation
     latest_close   = float(df["Close"].iloc[-1])
     forecast_price = float(future_df["Close"].iloc[0])
     sma20          = float(df["SMA_20"].iloc[-1])
@@ -234,12 +242,12 @@ if st.button("View Forecast 🚀"):
     recommendation = stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi)
 
     st.metric(label="Recommendation", value=recommendation)
-    st.write(f"Latest Close: {latest_close:.2f} | Forecast (next day): {forecast_price:.2f}")
+    st.write(f"Latest Close: {latest_close:.2f} {currency} | Forecast (next day): {forecast_price:.2f} {currency}")
 
     # Technical Indicators
     st.subheader("Technical Indicators")
     ti = pd.DataFrame(index=df.index)
-    ti["Close"] = pd.to_numeric(df["Close"].squeeze(), errors="coerce")
+    ti["Close"]  = pd.to_numeric(df["Close"].squeeze(), errors="coerce")
     ti["SMA_20"] = ti["Close"].rolling(window=20, min_periods=20).mean()
     ti["SMA_50"] = ti["Close"].rolling(window=50, min_periods=50).mean()
     delta = ti["Close"].diff()
@@ -276,7 +284,7 @@ if st.button("View Forecast 🚀"):
     fig2, ax1 = plt.subplots(figsize=(10, 4))
     ax1.plot(future_df.index, future_df["Close"], marker="o")
     ax1.set_title("Forecasted Close Price")
-    ax1.set_ylabel("Close Price")
+    ax1.set_ylabel(f"Close Price ({currency})")
     st.pyplot(fig2)
 
     fig3, ax2 = plt.subplots(figsize=(10, 4))
@@ -287,7 +295,7 @@ if st.button("View Forecast 🚀"):
 
     # Explainability (Integrated Gradients)
     st.subheader("🧠 Explainable AI — Integrated Gradients (Last 30 Days)")
-    last_window = scaled[-lookback:]  # last 30 days
+    last_window = scaled[-lookback:]  # shape: (lookback, 2) for [Close, Volume]
     ig_attributions = integrated_gradients(model, last_window)
     ig_df = pd.DataFrame(
         ig_attributions,
@@ -316,10 +324,8 @@ if st.button("View Forecast 🚀"):
         f"NextDayVolume={float(future_df['Volume'].iloc[0]):.0f}"
     )
     forecast_summary = (
-        f"{ticker}: Next-day close {forecast_price:.2f} vs latest {latest_close:.2f}. "
-        f"5-day mean path {five_day_avg:.2f}."
+        f"{company_name} ({ticker}): Next-day close {forecast_price:.2f} {currency} vs latest {latest_close:.2f} {currency}. "
+        f"5-day mean path {five_day_avg:.2f} {currency}."
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
-
-
