@@ -56,8 +56,6 @@ write a clear, professional 2–3 paragraph market commentary for an investor au
         return f"⚠️ Error generating report: {e}"
 
 
-_init_openai_key()
-
 # ===============================
 # Utilities
 # ===============================
@@ -307,5 +305,6 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
 
 
