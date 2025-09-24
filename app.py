@@ -13,9 +13,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
-# ===============================
-# OpenAI init + reporter
-# ===============================
+
 from openai import OpenAI
 
 def _init_openai_client():
@@ -58,9 +56,7 @@ write a clear, professional 2–3 paragraph market commentary for an investor au
         return f"⚠️ Error generating report: {e}"
 
 
-# ===============================
-# Utilities
-# ===============================
+
 def set_seed(seed=42):
     random.seed(seed); np.random.seed(seed); tf.random.set_seed(seed)
 
@@ -159,15 +155,21 @@ def stock_recommendation(latest_close, forecast_price, sma20, sma50, rsi):
         return "HOLD"
 
 
-# ===============================
-# App
-# ===============================
+
 st.title("📈 Short-Term Prediction of Stock Closing Prices and Market Volumes")
 
 # Sidebar
 ticker = st.sidebar.text_input("Stock Ticker", "AAPL")
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2020-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+
+# Fetch company info
+ticker_obj = yf.Ticker(ticker)
+company_name = ticker_obj.info.get("longName", ticker)   # fallback to ticker if not found
+currency = ticker_obj.info.get("currency", "N/A")        # e.g., "USD", "INR"
+
+st.subheader(f"Data Preview – {company_name} ({ticker}, {currency})")
+
 
 # Download data
 df = yf.download(ticker, start=start_date, end=end_date, interval="1d", auto_adjust=True)
@@ -319,4 +321,5 @@ if st.button("View Forecast 🚀"):
     )
     genai_report = generate_report(forecast_summary, indicators_text, recommendation)
     st.write(genai_report)
+
 
